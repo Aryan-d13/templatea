@@ -386,10 +386,10 @@ def main() -> None:
             print(f"[ERROR] {video}: {exc}\n")
         results.append(result)
 
-    if args.json_report:
-        args.json_report.parent.mkdir(parents=True, exist_ok=True)
-        args.json_report.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        print(f"[INFO] Saved report to {args.json_report}")
+    if args.json_report:args.json_report.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.json_report, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    print(f"[INFO] Saved report to {args.json_report}")
 
 
 if __name__ == "__main__":

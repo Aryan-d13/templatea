@@ -1,0 +1,10 @@
+[INFO] Processing E:\Code\Templatea\workspace\DPLhGvwERkd\00_raw\raw_source.mp4
+[OK] Extracted text:
+When Coca-Cola convinced Aamir Khan to become Japanese for an ad 😂
+
+[OK] AI recommended copies:
+  1. When Aamir Khan goes full Japanese for a hilarious Coke twist!
+  2. Coca-Cola made Aamir Khan embrace his inner Japanese – thirst just got funnier.
+  3. Aamir Khan’s Japanese makeover for Coke is refreshment with a side of comedy.
+
+[INFO] Saved report to workspace\DPLhGvwERkd\02_ocr\gemini_report.json

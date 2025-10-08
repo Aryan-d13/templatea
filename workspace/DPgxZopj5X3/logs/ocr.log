@@ -1,0 +1,12 @@
+CMD: python gemini_ocr_batch.py workspace\DPgxZopj5X3\00_raw\raw_source.mp4 --json-report workspace\DPgxZopj5X3\02_ocr\gemini_report.json --caption-dir workspace\DPgxZopj5X3\00_raw --caption-extension .txt
+RETURN: 0
+
+STDOUT:
+[INFO] Processing E:\Code\Templatea\workspace\DPgxZopj5X3\00_raw\raw_source.mp4
+[ERROR] E:\Code\Templatea\workspace\DPgxZopj5X3\00_raw\raw_source.mp4: 'charmap' codec can't encode character '\U0001f44b' in position 66: character maps to <undefined>
+
+[INFO] Saved report to workspace\DPgxZopj5X3\02_ocr\gemini_report.json
+
+
+STDERR:
+

@@ -1,0 +1,21 @@
+{
+  "ts": "2025-10-08T19:41:20.991018Z",
+  "workspaces": [
+    {
+      "id": "DPgxZopj5X3",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": false,
+      "rendered": false
+    },
+    {
+      "id": "DPLhGvwERkd",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": true,
+      "rendered": true
+    }
+  ]
+}
