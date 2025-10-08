@@ -5,7 +5,6 @@ from skimage.metrics import structural_similarity as ssim
 from scipy import ndimage
 import subprocess
 import tempfile
-import shutil
 
 def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
     """
@@ -78,7 +77,7 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
     if len(sampled_frames) < 10:
         cap.release()
         print("Not enough frames sampled. Returning original video.")
-        shutil.copy(input_path, output_path)
+        subprocess.run(['cp', str(input_path), str(output_path)], check=True)
         return {
             'detected': False,
             'confidence': 0.0,
@@ -390,7 +389,7 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
     if final_confidence < confidence_threshold:
         cap.release()
         print(f"Confidence ({final_confidence:.1f}%) below threshold ({confidence_threshold}%). Returning original video.")
-        shutil.copy(input_path, output_path)
+        subprocess.run(['cp', str(input_path), str(output_path)], check=True)
         return {
             'detected': False,
             'confidence': final_confidence,

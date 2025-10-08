@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-import math
 import os
 import subprocess
 import shutil
@@ -254,9 +253,6 @@ def process_marketingspots_template(input_video_path, output_video_path, text_co
     video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = cap.get(cv2.CAP_PROP_FPS)
-    if math.isnan(fps) or fps <= 0:
-        print("Warning: FPS not reported by source. Defaulting to 30fps.")
-        fps = 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"Input video: {video_width}x{video_height}, {fps} fps, {total_frames} frames")
@@ -354,63 +350,27 @@ def process_marketingspots_template(input_video_path, output_video_path, text_co
         
         print(f"Processing: {frame_count}/{total_frames}", end='\r')
     
-    print("\nVideo processing complete. Running ffmpeg mux/transcode...")
+    print("\nVideo processing complete. Adding audio...")
     cap.release()
     out.release()
-
-    ffmpeg_base_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        temp_video_path,
-    ]
-
-    if has_audio_stream(input_video_path):
-        print("Embedding original audio and transcoding to H.264/AAC...")
-        ffmpeg_cmd = ffmpeg_base_cmd + [
-            "-i",
-            input_video_path,
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "slow",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            output_video_path,
-        ]
-    else:
-        print("Source audio unavailable; exporting silent H.264 video...")
-        ffmpeg_cmd = ffmpeg_base_cmd + [
-            "-c:v",
-            "libx264",
-            "-preset",
-            "slow",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-an",
-            "-movflags",
-            "+faststart",
-            output_video_path,
-        ]
-
+    
+    # Merge audio with FFmpeg
     try:
-        subprocess.run(ffmpeg_cmd, check=True, capture_output=True)
+        if has_audio_stream(input_video_path):
+            print("Merging audio from original video...")
+            command = [
+                "ffmpeg", "-i", temp_video_path, "-i", input_video_path,
+                "-c:v", "copy", "-c:a", "aac",
+                "-map", "0:v:0", "-map", "1:a:0",
+                "-y", output_video_path
+            ]
+            subprocess.run(command, check=True, capture_output=True)
+        else:
+            print("No audio found. Saving silent video.")
+            shutil.move(temp_video_path, output_video_path)
     except subprocess.CalledProcessError as e:
-        print(f"\nError during ffmpeg processing: {e.stderr.decode(errors='ignore')}")
+        print(f"\nError during audio merge: {e.stderr.decode()}")
+        shutil.move(temp_video_path, output_video_path)
         return False
     finally:
         if os.path.exists(temp_video_path):
