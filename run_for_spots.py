@@ -2,8 +2,8 @@ import os
 from marketingspots_template import process_marketingspots_template
 
 # Define input and output directories
-input_folder = "OutputEncodedHopefully"
-output_folder = "OutputMarketingpotsTesting"
+input_folder = "CroppedOutput"
+output_folder = "TheFinalShow"
 
 # Create the output folder if it doesn't exist
 if not os.path.exists(output_folder):
