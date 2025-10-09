@@ -6,6 +6,23 @@ import os
 import subprocess
 import shutil
 import random
+import sys
+
+from builtins import print as _builtin_print
+
+
+def _safe_print(*args, **kwargs):
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    safe_args = []
+    for arg in args:
+        if isinstance(arg, str):
+            safe_args.append(arg.encode(encoding, errors="backslashreplace").decode(encoding, errors="ignore"))
+        else:
+            safe_args.append(arg)
+    _builtin_print(*safe_args, **kwargs)
+
+
+print = _safe_print  # type: ignore
 
 # --- MarketingSpots Template Configuration ---
 TEMPLATE_CONFIG = {

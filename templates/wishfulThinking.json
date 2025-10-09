@@ -1,0 +1,15 @@
+﻿{
+  "id": "wishfulThinking",
+  "name": "Wishful Thinking",
+  "module": "wishfulThinking",
+  "entrypoint": "render",
+  "description": "Cinematic template with soft gradients and smooth transitions.",
+  "preview": null,
+  "schema": {
+    "defaults": {
+      "text_color": "#F8F8F8",
+      "accent_color": "#FF7A59"
+    }
+  }
+}
+

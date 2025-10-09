@@ -4,3 +4,8 @@ Pillow
 requests
 scikit-image
 scipy
+fastapi
+uvicorn[standard]
+httpx
+pytest
+yt-dlp

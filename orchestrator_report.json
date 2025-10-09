@@ -1,16 +1,8 @@
 {
-  "ts": "2025-10-08T19:41:20.991018Z",
+  "ts": "2025-10-09T09:36:59.195571Z",
   "workspaces": [
     {
-      "id": "DPgxZopj5X3",
-      "downloaded": false,
-      "detected": true,
-      "ocr": true,
-      "choice": false,
-      "rendered": false
-    },
-    {
-      "id": "DPLhGvwERkd",
+      "id": "DPlD32ckwjO",
       "downloaded": false,
       "detected": true,
       "ocr": true,

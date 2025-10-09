@@ -1,0 +1,16 @@
+﻿{
+  "id": "marketingspots",
+  "name": "Marketing Spots",
+  "module": "marketingspots_template",
+  "entrypoint": "process_marketingspots_template",
+  "description": "High-conversion marketing spot template with bold captions.",
+  "preview": "/assets/marketingspots_logo.png",
+  "schema": {
+    "defaults": {
+      "text.font_family": "Anton.ttf",
+      "text.color": "#FFFFFF",
+      "canvas.background_color": "#000000"
+    }
+  }
+}
+
