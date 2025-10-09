@@ -7,6 +7,25 @@ import subprocess
 import tempfile
 import shutil
 
+def strip_white_edges(img, thresh=245):
+    h, w = img.shape[:2]
+    top, bottom, left, right = 0, h, 0, w
+
+    # Strip white rows from top and bottom
+    while top < bottom-1 and np.all(img[top, :, :] >= thresh):
+        top += 1
+    while bottom-1 > top and np.all(img[bottom-1, :, :] >= thresh):
+        bottom -= 1
+
+    # Strip white columns from left and right
+    while left < right-1 and np.all(img[:, left, :] >= thresh):
+        left += 1
+    while right-1 > left and np.all(img[:, right-1, :] >= thresh):
+        right -= 1
+
+    return img[top:bottom, left:right]
+
+
 def remove_background_border(frame, bbox, background_thresh=250):
     x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
     # Defend against out-of-bounds and minimum size
@@ -449,7 +468,26 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
         cropped = frame[refined_bbox['y']:refined_bbox['y'] + refined_bbox['h'],
                        refined_bbox['x']:refined_bbox['x'] + refined_bbox['w']]
         
+        # --- After cropping the frame ---
+        cropped = frame[refined_bbox['y']:refined_bbox['y'] + refined_bbox['h'],
+                        refined_bbox['x']:refined_bbox['x'] + refined_bbox['w']]
+
+        # Create grayscale and threshold to find inner contour (assume nearly white background)
+        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 245, 255, cv2.THRESH_BINARY_INV)
+
+        # Find largest contour
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            best_contour = max(contours, key=cv2.contourArea)
+            mask = np.zeros_like(gray)
+            cv2.drawContours(mask, [best_contour], -1, 255, thickness=-1)
+            # Mask the cropped image
+            cropped = cv2.bitwise_and(cropped, cropped, mask=mask)
+        # Now write as usual
+        cropped = strip_white_edges(cropped, thresh=245)
         out.write(cropped)
+      
         frame_count += 1
         
         if frame_count % 100 == 0:

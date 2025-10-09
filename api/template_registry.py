@@ -13,6 +13,16 @@ import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+# from pathlib import Path
+# find repo root (two levels up from this file: api/template_registry.py -> repo root)
+TEMPLATES_DIR = (Path(__file__).resolve().parent.parent / "templates").resolve()
+
+def _load_manifest(path: Path) -> Dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
 
 class TemplateRegistryError(RuntimeError):
     pass
