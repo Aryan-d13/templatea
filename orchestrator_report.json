@@ -1,13 +1,21 @@
 {
-  "ts": "2025-10-09T12:35:40.016355Z",
+  "ts": "2025-10-09T18:23:58.390208Z",
   "workspaces": [
     {
-      "id": "DPlPknsk5oq",
+      "id": "DPHk2CsjFPD",
       "downloaded": false,
       "detected": true,
       "ocr": true,
       "choice": true,
       "rendered": true
+    },
+    {
+      "id": "DPhRcbuk28N",
+      "error": "locked"
+    },
+    {
+      "id": "DPlPknsk5oq",
+      "error": "locked"
     }
   ]
 }

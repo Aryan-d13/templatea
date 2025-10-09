@@ -13,7 +13,7 @@ import subprocess
 import shlex
 import os
 import math
-from typing import Tuple, List
+from typing import Tuple, List, Set
 
 # Small util to call ffprobe
 def probe_video_size(path: str) -> Tuple[int,int]:
@@ -33,6 +33,7 @@ def load_template_cfg(template_root: Path):
     return json.loads(cfg_path.read_text(encoding="utf-8"))
 
 def measure_wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: ImageDraw.Draw):
+    """Wrap text to fit within max_width. Returns (lines, total_height)"""
     words = text.split()
     lines = []
     cur = ""
@@ -47,127 +48,278 @@ def measure_wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_width: in
             cur = w
     if cur:
         lines.append(cur)
-    # compute total height
-    heights = [draw.textbbox((0,0), ln, font=font)[3] - draw.textbbox((0,0), ln, font=font)[1] for ln in lines]
-    line_spacing = int(font.size * 0.12)
-    total_height = sum(heights) + max(0, (len(lines)-1) * line_spacing)
+    
+    # Compute total height with proper line spacing
+    if not lines:
+        return [], 0
+    
+    line_spacing_factor = 1.12
+    total_height = 0
+    for i, ln in enumerate(lines):
+        bbox = draw.textbbox((0,0), ln, font=font)
+        line_h = bbox[3] - bbox[1]
+        if i == 0:
+            total_height += line_h
+        else:
+            total_height += int(line_h * line_spacing_factor)
+    
     return lines, total_height
 
 def choose_font(draw, font_path: Path, requested_size: int, min_size: int, max_lines: int, max_width: int, text: str):
+    """Binary search for largest font that fits text within max_lines"""
     lo = min_size
     hi = requested_size
     best_size = lo
+    
     while lo <= hi:
         mid = (lo + hi) // 2
         try:
             font = ImageFont.truetype(str(font_path), mid)
         except Exception:
-            # fallback to default PIL font
             font = ImageFont.load_default()
+        
         lines, _ = measure_wrapped_lines(text, font, max_width, draw)
+        
         if len(lines) <= max_lines:
             best_size = mid
             lo = mid + 1
         else:
             hi = mid - 1
+    
     try:
         return ImageFont.truetype(str(font_path), best_size)
     except Exception:
         return ImageFont.load_default()
 
 def draw_highlight_rect(draw: ImageDraw.Draw, rect: Tuple[int,int,int,int], radius: int, fill):
-    # safe rounded rectangle
+    """Safe rounded rectangle drawing"""
     try:
         draw.rounded_rectangle(rect, radius=radius, fill=fill)
     except Exception:
         draw.rectangle(rect, fill=fill)
 
-def draw_highlights(draw: ImageDraw.Draw, lines: List[str], font: ImageFont.FreeTypeFont, x_origin: int, y_origin: int,
-                    highlight_words: List[str], highlight_color: str):
-    padding = max(6, int(font.size * 0.25))
+def parse_highlight_words(manual_words: List) -> List[List[str]]:
+    """
+    Parse manual_words which can be:
+    - Single words: ["Samsung", "Ballie"]
+    - Phrases: ["AI-powered home helper"]
+    Returns list of word lists (each inner list is a phrase to highlight together)
+    """
+    result = []
+    for item in manual_words:
+        if isinstance(item, str):
+            # Check if it's a phrase (multiple words)
+            words = item.strip().split()
+            result.append(words)
+        else:
+            result.append([str(item)])
+    return result
+
+def find_phrase_positions(lines: List[str], phrase: List[str]) -> List[Tuple[int, int, int]]:
+    """
+    Find all occurrences of a phrase in the lines.
+    Returns list of (line_idx, word_start_idx, word_end_idx) tuples.
+    Handles phrases that span across line breaks.
+    """
+    positions = []
+    
+    # Flatten all words with their line and position info
+    all_words = []
+    for line_idx, line in enumerate(lines):
+        words = line.split()
+        for word_idx, word in enumerate(words):
+            cleaned = word.strip(".,!?:;\"'()[]{}").lower()
+            all_words.append((line_idx, word_idx, word, cleaned))
+    
+    # Search for phrase
+    phrase_clean = [w.strip(".,!?:;\"'()[]{}").lower() for w in phrase]
+    phrase_len = len(phrase_clean)
+    
+    i = 0
+    while i <= len(all_words) - phrase_len:
+        # Check if phrase matches starting at position i
+        match = True
+        for j in range(phrase_len):
+            if all_words[i + j][3] != phrase_clean[j]:
+                match = False
+                break
+        
+        if match:
+            # Found a match
+            start_line = all_words[i][0]
+            end_line = all_words[i + phrase_len - 1][0]
+            
+            if start_line == end_line:
+                # Phrase is on same line
+                positions.append((start_line, all_words[i][1], all_words[i + phrase_len - 1][1]))
+            else:
+                # Phrase spans multiple lines - highlight each line segment separately
+                current_line = start_line
+                for k in range(phrase_len):
+                    word_line = all_words[i + k][0]
+                    word_pos = all_words[i + k][1]
+                    
+                    if word_line != current_line:
+                        current_line = word_line
+                    
+                    # Add individual word position
+                    positions.append((word_line, word_pos, word_pos))
+            
+            i += phrase_len
+        else:
+            i += 1
+    
+    return positions
+
+def draw_highlights(
+    draw: ImageDraw.Draw,
+    lines: List[str],
+    font: ImageFont.FreeTypeFont,
+    x_origin: int,
+    y_origin: int,
+    highlight_phrases: List[List[str]],
+    highlight_color: str,
+    pad_px: int = 3  # <--- modular padding here
+):
+    """
+    Draw highlight rectangles behind words/phrases—now with modular fixed padding.
+    """
+    if not highlight_phrases:
+        return
+
+    radius = max(4, int(font.size * 0.2))
+    line_spacing = int(font.size * 0.12)  # font spacing
+
+    highlight_positions = set()
+    for phrase in highlight_phrases:
+        positions = find_phrase_positions(lines, phrase)
+        for line_idx, start_word, end_word in positions:
+            for word_idx in range(start_word, end_word + 1):
+                highlight_positions.add((line_idx, word_idx))
+
     y = y_origin
-    for line in lines:
-        parts = line.split(" ")
+    for line_idx, line in enumerate(lines):
+        words = line.split()
         cursor_x = x_origin
-        for p in parts:
-            cleaned = p.strip(".,!?:;\"'()[]{}").lower()
-            bbox = draw.textbbox((0,0), p, font=font)
-            w = bbox[2] - bbox[0]
-            # consider trailing space width for cursor advance
-            space_bbox = draw.textbbox((0,0), p + " ", font=font)
-            space_w = space_bbox[2] - space_bbox[0]
-            if any(cleaned == hw.lower().strip() for hw in highlight_words):
-                rect = [cursor_x - padding, y - padding, cursor_x + w + padding, y + (bbox[3]-bbox[1]) + padding]
-                draw_highlight_rect(draw, rect, radius=padding, fill=highlight_color)
-            cursor_x += space_w
-        y += int((bbox[3]-bbox[1]) * 1.08)
+
+        for word_idx, word in enumerate(words):
+            bbox = draw.textbbox((cursor_x, y), word, font=font, anchor="la")
+            highlight_rect = (
+                bbox[0] - pad_px,
+                bbox[1] - pad_px,
+                bbox[2] + pad_px,
+                bbox[3] + pad_px,
+            )
+            if (line_idx, word_idx) in highlight_positions:
+                try:
+                    draw.rounded_rectangle(highlight_rect, radius=radius, fill=highlight_color)
+                except Exception:
+                    draw.rectangle(highlight_rect, fill=highlight_color)
+
+            word_width = font.getlength(word)
+            space_width = font.getlength(" ") if word_idx < len(words) - 1 else 0
+            cursor_x += word_width + space_width
+
+        y += font.getbbox(line)[3] - font.getbbox(line)[1] + line_spacing
+
 
 def select_highlight_words_via_ai(text: str, top_k: int = 3) -> List[str]:
-    # Default placeholder: longest words - meant to be replaced by your AI hook.
+    """
+    Default AI selector: picks longest words.
+    Returns list of individual words (not phrases).
+    """
     cleaned = [w.strip(".,!?:;\"'()[]{}") for w in text.split()]
     cleaned = [w for w in cleaned if len(w) > 2]
     cleaned.sort(key=lambda w: -len(w))
     return cleaned[:top_k]
 
+def probe_duration(path):
+    try:
+        out = subprocess.check_output(["ffprobe","-v","error","-show_entries","format=duration",
+                                       "-of","default=noprint_wrappers=1:nokey=1", path])
+        return float(out.decode().strip())
+    except Exception:
+        return None
+
+
 def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_video_path: str, cfg: dict):
     """
-    This function overlays the input_video onto the canvas image using ffmpeg filters.
-    It assumes input_video is already cropped to the area you want to place on the canvas.
+    Fixed compositing that explicitly limits canvas duration to match video duration.
     """
-    # ffmpeg command approach:
-    # 1. scale video to desired vw x vh using -vf scale
-    # 2. overlay at desired position
-    # 3. map audio from input_video (if requested)
+    import tempfile, shlex, subprocess, os, math, shutil
+
     template_video_cfg = cfg.get("video", {})
     canvas_w = cfg.get("canvas", {}).get("width", 1080)
     vw_pct = template_video_cfg.get("width_pct", 100) / 100.0
     vw = int(canvas_w * vw_pct)
-    # we'll calculate vh by probing original (preserve aspect by scale=-2)
+
+    # Get video duration FIRST
+    video_duration = probe_duration(input_video_path)
+    if video_duration is None:
+        raise RuntimeError("Cannot determine video duration")
+
+    # temp files
     tmp_scaled = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp_scaled.close()
-    ffmpeg_params = cfg.get("render", {}).get("ffmpeg_params", "-c:v libx264 -crf 18 -preset veryfast")
-    try:
-        # scale while preserving aspect
-        cmd_scale = f"ffmpeg -y -i {shlex.quote(input_video_path)} -vf scale={vw}:-2 -c:v libx264 -crf 18 -preset veryfast -an {shlex.quote(tmp_scaled.name)}"
-        subprocess.check_call(shlex.split(cmd_scale))
-        # overlay onto canvas image
-        # read target overlay position
-        pos = template_video_cfg.get("position", {})
-        # default center horizontally and use vertical_align
-        canvas_h = cfg.get("canvas", {}).get("height", 1920)
-        vertical_align = template_video_cfg.get("vertical_align", "center")
-        # compute vw/vh
-        vw_actual, vh_actual = probe_video_size(tmp_scaled.name)
-        if vertical_align == "center":
-            ox = (canvas_w - vw_actual)//2
-            oy = (canvas_h - vh_actual)//2
-        elif vertical_align == "top":
-            ox = (canvas_w - vw_actual)//2
-            oy = 0
-        elif vertical_align == "bottom":
-            ox = (canvas_w - vw_actual)//2
-            oy = canvas_h - vh_actual
-        else:
-            ox = pos.get("x", (canvas_w - vw_actual)//2)
-            oy = pos.get("y", (canvas_h - vh_actual)//2)
 
-        # overlay command: canvas (image) as base, video as overlay, then audio map from input_video_path
-        tmp_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-        tmp_with_audio.close()
-        cmd_overlay = (
-            f'ffmpeg -y -loop 1 -i {shlex.quote(canvas_path)} -i {shlex.quote(tmp_scaled.name)} '
-            f'-filter_complex "[1:v]format=yuva420p[vid];[0:v][vid]overlay={ox}:{oy}:format=yuv420" '
-            f'-map 0:v -map 1:a? -c:v libx264 -crf 18 -preset veryfast -c:a aac -shortest {shlex.quote(tmp_with_audio.name)}'
-        )
-        subprocess.check_call(shlex.split(cmd_overlay))
-        # final move
-        os.replace(tmp_with_audio.name, out_video_path)
+    base_opts = "-hide_banner -loglevel warning"
+
+    # 1) scale input preserving aspect ratio
+    cmd_scale = f"ffmpeg -y {base_opts} -i {shlex.quote(input_video_path)} -vf scale={vw}:-2 -c:v libx264 -crf 18 -preset veryfast -an {shlex.quote(tmp_scaled.name)}"
+    subprocess.run(shlex.split(cmd_scale), check=True)
+
+    # compute overlay position
+    canvas_h = cfg.get("canvas", {}).get("height", 1920)
+    vw_actual, vh_actual = probe_video_size(tmp_scaled.name)
+    vertical_align = template_video_cfg.get("vertical_align", "center")
+    if vertical_align == "center":
+        ox = (canvas_w - vw_actual)//2
+        oy = (canvas_h - vh_actual)//2
+    elif vertical_align == "top":
+        ox = (canvas_w - vw_actual)//2
+        oy = 0
+    elif vertical_align == "bottom":
+        ox = (canvas_w - vw_actual)//2
+        oy = canvas_h - vh_actual
+    else:
+        pos = template_video_cfg.get("position", {})
+        ox = int(pos.get("x", (canvas_w - vw_actual)//2))
+        oy = int(pos.get("y", (canvas_h - vh_actual)//2))
+
+    # prepare output tmp
+    tmp_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_with_audio.close()
+
+    # 2) Overlay with explicit duration limits
+    cmd_overlay = (
+        f'ffmpeg -y {base_opts} '
+        f'-loop 1 -t {video_duration} -i {shlex.quote(canvas_path)} '
+        f'-i {shlex.quote(tmp_scaled.name)} '
+        f'-filter_complex "[0:v][1:v]overlay={ox}:{oy}:format=yuv420:shortest=1[outv]" '
+        f'-map "[outv]" -map 1:a? -c:v libx264 -crf 18 -preset veryfast -c:a aac '
+        f'-t {video_duration} {shlex.quote(tmp_with_audio.name)}'
+    )
+
+    try:
+        subprocess.run(shlex.split(cmd_overlay), check=True)
+        shutil.move(tmp_with_audio.name, out_video_path)
+    except subprocess.CalledProcessError as e:
+        log_path = os.path.join(tempfile.gettempdir(), "ffmpeg_overlay_error.log")
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write(f"COMMAND: {cmd_overlay}\nERROR: {e}\n\n")
+        try:
+            os.unlink(tmp_with_audio.name)
+        except Exception:
+            pass
+        raise
     finally:
-        for t in (tmp_scaled.name,):
-            try:
-                os.unlink(t)
-            except Exception:
-                pass
+        try:
+            os.unlink(tmp_scaled.name)
+        except Exception:
+            pass
+
+    return True
+
 
 def render_with_template(input_video_path: str, output_video_path: str, text: str, template_root: str, overrides: dict = None):
     """
@@ -203,7 +355,6 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
     # Compute video box
     video_cfg = cfg.get("video", {})
     vw = int(canvas_w * (video_cfg.get("width_pct", 100)/100.0))
-    # preserve aspect from vid_w:vid_h
     aspect = vid_h and (vid_w/vid_h) or (16/9)
     vh = max(2, int(vw / aspect))
     vx = int((canvas_w - vw)//2)
@@ -226,7 +377,8 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
     max_lines = int(txt_cfg.get("max_lines", 2))
     line_width_pct = float(txt_cfg.get("line_width_pct", 90))
     max_width = int(canvas_w * (line_width_pct/100.0))
-    # choose font
+    
+    # Choose font that fits within max_lines
     if font_path and font_path.exists():
         font = choose_font(draw, font_path, requested_size, min_size, max_lines, max_width, text)
     else:
@@ -234,10 +386,11 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
 
     lines, text_h = measure_wrapped_lines(text, font, max_width, draw)
 
-    # compute text bottom anchored above video top by gap_px
+    # CRITICAL FIX: Position text so BOTTOM is gap_px above video top
     gap_px = int(txt_cfg.get("position_relative_to_video", {}).get("gap_px", 20))
     text_bottom = vy - gap_px
     text_top = int(text_bottom - text_h)
+    
     # x origin by alignment
     align = txt_cfg.get("align", "center")
     if align == "center":
@@ -247,41 +400,71 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
     else:
         x_origin = canvas_w - int(canvas_w * 0.05) - max_width
 
-    # highlight words
+    # Highlight configuration
     hl_cfg = txt_cfg.get("highlight", {})
-    highlight_words = []
+    highlight_phrases = []
+    
     if hl_cfg.get("enabled", False):
         if hl_cfg.get("mode", "ai") == "manual":
-            highlight_words = hl_cfg.get("manual_words", [])
+            # Manual mode: parse manual_words which can be words or phrases
+            manual_words = hl_cfg.get("manual_words", [])
+            highlight_phrases = parse_highlight_words(manual_words)
         else:
-            highlight_words = select_highlight_words_via_ai(text)
+            # AI mode: use top_k from config (default 3)
+            top_k = int(hl_cfg.get("highlight_count", 3))
+            ai_words = select_highlight_words_via_ai(text, top_k=top_k)
+            highlight_phrases = [[w] for w in ai_words]  # Convert to phrase format
 
-    # draw highlights
-    if highlight_words:
-        draw_highlights(draw, lines, font, x_origin, text_top, highlight_words, hl_cfg.get("default_highlight_color", "#ffde59"))
+    # Draw highlights FIRST (behind text)
+    if highlight_phrases:
+        draw_highlights(draw, lines, font, x_origin, text_top, highlight_phrases, 
+                       hl_cfg.get("default_highlight_color", "#ffde59"))
 
-    # draw text
+    # Draw text ON TOP of highlights
     y = text_top
-    for ln in lines:
+    line_spacing_factor = 1.12
+    for i, ln in enumerate(lines):
         draw.text((x_origin, y), ln, font=font, fill=txt_cfg.get("color", "#ffffff"))
-        # approximate line height
-        h = draw.textbbox((0,0), ln, font=font)[3] - draw.textbbox((0,0), ln, font=font)[1]
-        y += int(h * 1.08)
+        bbox = draw.textbbox((0,0), ln, font=font)
+        h = bbox[3] - bbox[1]
+        if i == 0:
+            y += h
+        else:
+            y += int(h * line_spacing_factor)
 
-    # logo
+    # Logo with proper aspect ratio preservation
     logo_cfg = cfg.get("logo", {})
     if logo_cfg.get("enabled", True):
         logo_path = root / logo_cfg.get("path", "")
         if logo_path.exists():
             try:
                 logo = Image.open(logo_path).convert("RGBA")
-                # desired size
+                
                 sz = logo_cfg.get("size", {})
-                target_w = int(sz.get("width", logo.width))
-                target_h = int(sz.get("height", int(logo.height * (target_w/logo.width) if logo.width else logo.height)))
+                target_w = sz.get("width")
+                target_h = sz.get("height")
+                
+                # Preserve aspect ratio
+                if target_w and target_h:
+                    target_w = int(target_w)
+                    target_h = int(target_h)
+                elif target_w:
+                    target_w = int(target_w)
+                    aspect_ratio = logo.height / logo.width if logo.width else 1
+                    target_h = int(target_w * aspect_ratio)
+                elif target_h:
+                    target_h = int(target_h)
+                    aspect_ratio = logo.width / logo.height if logo.height else 1
+                    target_w = int(target_h * aspect_ratio)
+                else:
+                    target_w = logo.width
+                    target_h = logo.height
+                
                 logo = logo.resize((target_w, target_h), Image.LANCZOS)
+                
                 pos = logo_cfg.get("position", "top-right")
                 margin = int(logo_cfg.get("margin", 36))
+                
                 if pos == "top-right":
                     lx = canvas_w - target_w - margin
                     ly = margin
@@ -294,19 +477,20 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
                 else:
                     lx = margin
                     ly = canvas_h - target_h - margin
+                
                 image.paste(logo, (lx, ly), logo)
-            except Exception:
-                pass
+            except Exception as e:
+                pass  # Silent fail for logo issues
 
-    # Save canvas image to tmp
+    # Save canvas to temp file
     tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
     tmp_canvas.close()
     image.save(tmp_canvas.name)
 
-    # Composite canvas and video into final video using ffmpeg
+    # Composite canvas and video
     composite_canvas_and_video(tmp_canvas.name, input_video_path, output_video_path, cfg)
 
-    # cleanup
+    # Cleanup
     try:
         os.unlink(tmp_canvas.name)
     except Exception:

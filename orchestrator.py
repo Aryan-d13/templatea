@@ -47,7 +47,7 @@ except Exception:
 # Config
 WORKSPACE_BASE = Path("workspace")
 DETECTOR_THRESHOLD = "60"
-RETRY_MAX = 3
+RETRY_MAX = 9999
 RETRY_BACKOFF = 2  # multiplier
 
 def ts():
