@@ -1,0 +1,55 @@
+{
+    "id": "marketing_spots",
+    "module": "templates.marketing_spots",
+    "entrypoint": "render",
+    "description": "High-conversion marketing spot template with bold captions.",
+    "name": "Marketing Spots",
+    "canvas": { 
+      "width": 1080, 
+      "height": 1920 
+    },
+    "background": {
+      "type": "color",
+      "value": "#050505"
+    },
+    "video": {
+      "width_pct": 100,
+      "vertical_align": "center"
+    },
+    "text": {
+      "font": "./assets/canva-sans-bold.otf",
+      "font_size": 52,
+      "min_font_size": 40,
+      "max_lines": 2,
+      "line_width_pct": 90,
+      "position_relative_to_video": { 
+        "gap_px": 40 
+      },
+      "color": "#f5f5f5",
+      "align": "center",
+      "highlight": {
+        "enabled": true,
+        "mode": "ai",
+        "manual_words": [
+          "Throwback",
+          "AI-powered",
+          "arriving"
+        ],
+        "highlight_count": 1,
+        "default_highlight_color": "#e762bd"
+      }
+    },
+    "logo": {
+      "enabled": true,
+      "path": "assets/marketingspots_logo.png",
+      "size": { 
+        "width": 100
+      },
+      "position": "top-right",
+      "margin": 50
+    },
+    "render": {
+      "audio_merge": true,
+      "ffmpeg_params": "-c:v libx264 -crf 18 -preset veryfast"
+    }
+  }

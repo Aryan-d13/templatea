@@ -1,6 +1,30 @@
 {
-  "ts": "2025-10-09T18:23:58.390208Z",
+  "ts": "2025-10-09T22:08:03.934100Z",
   "workspaces": [
+    {
+      "id": "DM8C79mtFGa",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": true,
+      "rendered": true
+    },
+    {
+      "id": "DN8Dicfki5i",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": true,
+      "rendered": true
+    },
+    {
+      "id": "DNp4dHio2dn",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": true,
+      "rendered": true
+    },
     {
       "id": "DPHk2CsjFPD",
       "downloaded": false,
@@ -12,6 +36,14 @@
     {
       "id": "DPhRcbuk28N",
       "error": "locked"
+    },
+    {
+      "id": "DPlhNwgk6s8",
+      "downloaded": false,
+      "detected": true,
+      "ocr": true,
+      "choice": true,
+      "rendered": true
     },
     {
       "id": "DPlPknsk5oq",

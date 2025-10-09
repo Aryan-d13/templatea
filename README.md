@@ -35,11 +35,28 @@ Run the API:
 uvicorn api.app:APP --host 0.0.0.0 --port 8000
 ```
 
+## Template Rendering CLI
+Render a single video against any template manifest without running the whole pipeline:
+```bash
+python cli/template_renderer.py --input input.mp4 --output output.mp4 \
+  --choice-file workspace/<id>/03_choice/choice.txt \
+  --template-root templates/clean_ad \
+  --override text.color="#ff00ff"
+```
+
+Key options:
+- `--text` or `--choice-file` supplies the caption text (choice file is read and stripped).
+- `--template-root` points to the folder containing `template.json` and assets (defaults to `templates/default`).
+- `--override key=value` applies shallow overrides to the template configuration; dotted keys reach nested values and values accept JSON literals.
+- `--dry-run` prints the resolved payload without invoking ffmpeg/Pillow, helpful for validation.
+
+The CLI uses the same `TemplateEngine` that powers the orchestrator, so pipeline behaviour is unchanged.
+
 Key endpoints:
-- `GET /api/v1/workspaces` – list indexed workspaces
-- `GET /api/v1/workspaces/{id}` – retrieve metadata + artifact URLs
-- `POST /api/v1/reels` – trigger a new download (requires `X-API-Key` header)
-- `POST /api/v1/workspaces/{id}/choice` – set manual/AI copy and re-render
+- `GET /api/v1/workspaces` - list indexed workspaces
+- `GET /api/v1/workspaces/{id}` - retrieve metadata + artifact URLs
+- `POST /api/v1/reels` - trigger a new download (requires `X-API-Key` header)
+- `POST /api/v1/workspaces/{id}/choice` - set manual/AI copy and re-render
 - `GET /api/v1/templates` – enumerate available templates
 - `WS /ws/workspace/{id}?api_key=...` – live status stream
 

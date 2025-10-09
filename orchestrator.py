@@ -16,10 +16,10 @@ Notes:
 - Writes workspace/<id>/<step>.status JSON with {"status","ts","error","retries"}
 """
 
-import argparse, subprocess, json, time, os
+import argparse, subprocess, json, time, os, hashlib, shutil, sys, threading
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 import re
 _EMOJI_RE = re.compile(
     "["                                    # character ranges
@@ -33,10 +33,21 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE
 )
 
+_URL_SHORTCODE_RE = re.compile(r"(?:/p/|/reel/|/reels/|/tv/|/video/)([A-Za-z0-9_-]{6,})")
+
 def clean_text_for_render(text: str) -> str:
     if not isinstance(text, str):
         return ""
     return _EMOJI_RE.sub("", text).strip()
+
+def derive_canonical_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    match = _URL_SHORTCODE_RE.search(url)
+    if match:
+        return match.group(1)
+    fallback = re.search(r"([A-Za-z0-9_-]{6,})", url)
+    return fallback.group(1) if fallback else None
 
 try:
     from api.template_registry import get_renderer_func, TemplateRegistryError
@@ -47,14 +58,28 @@ except Exception:
 # Config
 WORKSPACE_BASE = Path("workspace")
 DETECTOR_THRESHOLD = "60"
-RETRY_MAX = 9999
+RETRY_MAX = 3
 RETRY_BACKOFF = 2  # multiplier
+CHOICE_DECISION_TIMEOUT = int(os.getenv("CHOICE_DECISION_TIMEOUT", "30"))
 
 def ts():
     return datetime.utcnow().isoformat() + "Z"
 
-def write_status(ws: Path, step: str, status: str, error=None, retries=0):
-    s = {"status": status, "ts": ts(), "error": None if error is None else str(error), "retries": retries}
+def write_status(ws: Path, step: str, status: str, error=None, retries=0, extra: Optional[dict] = None):
+    s = {
+        "status": status,
+        "ts": ts(),
+        "error": None if error is None else str(error),
+        "retries": retries,
+    }
+    if extra:
+        try:
+            # ensure we don't mutate caller dict
+            for key, value in extra.items():
+                s[key] = value
+        except Exception:
+            # best-effort, ignore extra on failure
+            pass
     p = ws / f"{step}.status"
     tmp = p.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf8") as f:
@@ -142,9 +167,37 @@ def ensure_ocr(ws: Path):
     ocr_txt = ocr_dir / "ocr.txt"
     ai_json = ocr_dir / "ai_copies.json"
 
-    if ocr_txt.exists() and ai_json.exists():
-        write_status(ws, "02_ocr", "success")
-        return True
+    if ocr_txt.exists() or ai_json.exists():
+        history_dir = ocr_dir / "history"
+        archived: List[str] = []
+        timestamp_label = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+        try:
+            history_dir.mkdir(exist_ok=True)
+        except Exception:
+            pass
+
+        def _archive(path: Path, label: str) -> None:
+            if not path.exists():
+                return
+            suffix = "".join(path.suffixes) if path.suffixes else path.suffix
+            destination = history_dir / f"{label}_{timestamp_label}{suffix}"
+            try:
+                shutil.move(str(path), str(destination))
+                archived.append(destination.name)
+            except Exception:
+                pass
+
+        _archive(ocr_txt, "ocr")
+        _archive(ai_json, "ai_copies")
+        _archive(ocr_dir / "gemini_report.json", "gemini_report")
+
+        if archived:
+            write_status(
+                ws,
+                "02_ocr",
+                "refreshing",
+                extra={"archived": archived},
+            )
 
     # Prefer the full raw video for OCR+cross-checking (per your note)
     raw_video = ws / "00_raw" / "raw_source.mp4"
@@ -259,51 +312,170 @@ def ensure_choice(ws: Path, auto=False):
     choice_dir.mkdir(exist_ok=True)
     choice_file = choice_dir / "choice.txt"
     manual_file = choice_dir / "manual.txt"
-    status_file = choice_dir / "03_choice.status"
-    if choice_file.exists():
-        write_status(ws, "03_choice", "success")
+
+    def finalize_choice(text: str, status_value: str, source: str) -> bool:
+        if not text:
+            return False
+        cleaned = text.strip()
+        if not cleaned:
+            return False
+        with open(choice_file, "w", encoding="utf8") as f:
+            f.write(cleaned)
+        write_status(
+            ws,
+            "03_choice",
+            status_value,
+            extra={
+                "selected_source": source,
+                "selected_text": cleaned,
+            },
+        )
         return True
-    # manual override
-    if manual_file.exists():
-        try:
-            with open(manual_file, "r", encoding="utf-8-sig") as f:
-                text = f.read().strip()
-            with open(choice_file, "w", encoding="utf8") as f:
-                f.write(text)
-            write_status(ws, "03_choice", "manual_selected")
-            return True
-        except Exception as e:
-            write_status(ws, "03_choice", "failed", error=str(e))
-            return False
-    # auto
-    if auto:
-        ai_json = ws / "02_ocr" / "ai_copies.json"
-        if ai_json.exists():
+
+    def try_existing_choice() -> bool:
+        if choice_file.exists():
             try:
-                with open(ai_json, "r", encoding="utf-8-sig") as f:
-                    ac = json.load(f)
-                chosen = ac[0]["text"] if isinstance(ac, list) and len(ac) > 0 and "text" in ac[0] else str(ac[0])
-                with open(choice_file, "w", encoding="utf8") as f:
-                    f.write(chosen)
-                write_status(ws, "03_choice", "auto_selected")
-                return True
-            except Exception as e:
-                write_status(ws, "03_choice", "failed", error=str(e))
-                return False
-        else:
-            write_status(ws, "03_choice", "pending_choice", error="no ai_copies", retries=0)
+                text = choice_file.read_text(encoding="utf-8-sig")
+            except Exception:
+                text = ""
+            write_status(
+                ws,
+                "03_choice",
+                "success",
+                extra={
+                    "selected_source": "existing",
+                    "selected_text": text.strip(),
+                },
+            )
+            return True
+        return False
+
+    def try_manual_choice() -> bool:
+        if not manual_file.exists():
             return False
-    # not auto -> pending
-    write_status(ws, "03_choice", "pending_choice")
+        try:
+            text = manual_file.read_text(encoding="utf-8-sig")
+        except Exception as exc:
+            write_status(ws, "03_choice", "failed", error=str(exc))
+            return False
+        if finalize_choice(text, "manual_selected", "manual"):
+            return True
+        return False
+
+    if try_existing_choice():
+        return True
+    if try_manual_choice():
+        return True
+
+    ocr_txt_path = ws / "02_ocr" / "ocr.txt"
+    try:
+        ocr_text = ocr_txt_path.read_text(encoding="utf-8-sig").strip()
+    except Exception:
+        ocr_text = ""
+
+    ai_json = ws / "02_ocr" / "ai_copies.json"
+    ai_candidates: List[dict] = []
+    if ai_json.exists():
+        try:
+            with ai_json.open("r", encoding="utf-8-sig") as f:
+                raw_ai = json.load(f)
+            if isinstance(raw_ai, list):
+                for idx, item in enumerate(raw_ai, start=1):
+                    if isinstance(item, dict):
+                        text_value = (
+                            item.get("text")
+                            or item.get("caption")
+                            or item.get("one_liner")
+                        )
+                        if text_value:
+                            ai_candidates.append(
+                                {
+                                    "id": item.get("id") or f"ai-{idx}",
+                                    "text": str(text_value).strip(),
+                                    "source": item.get("source") or "ai",
+                                }
+                            )
+                    else:
+                        ai_candidates.append(
+                            {
+                                "id": f"ai-{idx}",
+                                "text": str(item).strip(),
+                                "source": "ai",
+                            }
+                        )
+        except Exception:
+            ai_candidates = []
+
+    options_payload = {
+        "options": {
+            "ocr_text": ocr_text,
+            "ai_copies": ai_candidates,
+            "timeout_seconds": CHOICE_DECISION_TIMEOUT if auto else None,
+        }
+    }
+
+    if auto:
+        write_status(
+            ws,
+            "03_choice",
+            "pending_choice",
+            extra={"state": "waiting_user", **options_payload},
+        )
+        deadline = time.time() + CHOICE_DECISION_TIMEOUT
+        while time.time() < deadline:
+            if try_existing_choice():
+                return True
+            if try_manual_choice():
+                return True
+            time.sleep(1)
+        # one last check in case user wrote near timeout
+        if try_existing_choice():
+            return True
+        if try_manual_choice():
+            return True
+
+        fallback_text = None
+        fallback_source = None
+        if ai_candidates:
+            fallback_text = ai_candidates[0].get("text", "")
+            fallback_source = ai_candidates[0].get("id") or "ai"
+        elif ocr_text:
+            fallback_text = ocr_text
+            fallback_source = "ocr"
+
+        if fallback_text:
+            if finalize_choice(fallback_text, "auto_selected", fallback_source or "auto"):
+                return True
+            write_status(
+                ws,
+                "03_choice",
+                "failed",
+                error="Auto-selected text invalid",
+                extra=options_payload,
+            )
+            return False
+        write_status(
+            ws,
+            "03_choice",
+            "failed",
+            error="No copy available for auto selection",
+            extra=options_payload,
+        )
+        return False
+
+    # auto is False -> inform caller and wait for external input
+    write_status(
+        ws,
+        "03_choice",
+        "pending_choice",
+        extra={"state": "awaiting_manual", **options_payload},
+    )
     return False
 
 def ensure_render(ws: Path, template_id: Optional[str] = None):
     render_dir = ws / "04_render"
     render_dir.mkdir(exist_ok=True)
-    final = render_dir / "final_1080x1920.mp4"
-    if final.exists():
-        write_status(ws, "04_render", "success")
-        return True
+    canonical_final = render_dir / "final_1080x1920.mp4"
     choice = ws / "03_choice" / "choice.txt"
     cropped = ws / "01_detector" / "cropped.mp4"
     if not cropped.exists():
@@ -316,18 +488,76 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
     meta = read_meta(ws)
     effective_template_id = template_id or meta.get("template_id")
     template_options = dict(meta.get("template_options", {}))
-    text_value = choice.read_text(encoding="utf-8-sig").strip()
+    raw_text = choice.read_text(encoding="utf-8-sig")
+    text_value = clean_text_for_render(raw_text)
+    text_hash = hashlib.sha256(text_value.encode("utf-8")).hexdigest() if text_value else "empty"
 
-    text_value = clean_text_for_render(choice.read_text(encoding="utf-8-sig"))
+    template_key = effective_template_id or "legacy_default"
 
+    def options_signature(options: dict) -> str:
+        if not options:
+            return "none"
+        try:
+            payload = json.dumps(options, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            payload = str(options)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    signature = options_signature(template_options)
+    renders_meta = meta.setdefault("renders", {})
+
+    template_output_dir = render_dir / "templates" / template_key
+    template_output_dir.mkdir(parents=True, exist_ok=True)
+    template_final = template_output_dir / "final_1080x1920.mp4"
+
+    existing_entry = renders_meta.get(template_key, {})
+    existing_path = Path(existing_entry.get("path", "")) if existing_entry.get("path") else template_final
+
+    def record_success(source_path: Path, selected_text: str, selected_hash: str) -> bool:
+        if not source_path.exists():
+            return False
+        canonical_final.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copyfile(str(source_path), str(canonical_final))
+        except shutil.SameFileError:
+            pass
+        now_ts = ts()
+        renders_meta[template_key] = {
+            "path": str(source_path),
+            "options_signature": signature,
+            "template_options": template_options,
+            "text_hash": selected_hash,
+            "text": selected_text,
+            "ts": now_ts,
+        }
+        meta["render"] = {
+            "template_id": effective_template_id,
+            "template_options": template_options,
+            "path": str(source_path),
+            "text_hash": selected_hash,
+            "text": selected_text,
+            "ts": now_ts,
+        }
+        write_meta(ws, meta)
+        write_status(ws, "04_render", "success")
+        return True
+
+    if (
+        existing_path.exists()
+        and existing_entry.get("options_signature") == signature
+        and existing_entry.get("text_hash") == text_hash
+    ):
+        return record_success(existing_path, text_value, text_hash)
 
     if effective_template_id and get_renderer_func:
         try:
             renderer = get_renderer_func(effective_template_id)
-            ok = renderer(str(cropped), str(final), text_value, template_options)
+            ok = renderer(str(cropped), str(template_final), text_value, template_options)
             if ok is None or ok is True:
-                write_status(ws, "04_render", "success")
-                return True
+                if record_success(template_final, text_value, text_hash):
+                    return True
+                write_status(ws, "04_render", "failed", error="rendered file missing")
+                return False
             write_status(ws, "04_render", "failed", error="renderer returned False")
             return False
         except TemplateRegistryError as tre:
@@ -340,18 +570,22 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
     # fallback legacy renderer
     try:
         from marketingspots_template import process_marketingspots_template
-        ok = process_marketingspots_template(str(cropped), str(final), text_value)
+        ok = process_marketingspots_template(str(cropped), str(template_final), text_value)
         if ok is None or ok is True:
-            write_status(ws, "04_render", "success")
-            return True
+            if record_success(template_final, text_value, text_hash):
+                return True
+            write_status(ws, "04_render", "failed", error="rendered file missing")
+            return False
         write_status(ws, "04_render", "failed", error="templater returned False")
         return False
     except Exception:
-        cmd = ["python", "run_for_spots.py", str(cropped), str(final), str(choice)]
+        cmd = ["python", "run_for_spots.py", str(cropped), str(template_final), str(choice)]
         code, out, err = run_cmd(cmd, timeout=300)
-        if code == 0 and final.exists():
-            write_status(ws, "04_render", "success")
-            return True
+        if code == 0 and template_final.exists():
+            if record_success(template_final, text_value, text_hash):
+                return True
+            write_status(ws, "04_render", "failed", error="rendered file missing")
+            return False
         write_status(ws, "04_render", "failed", error=err)
         return False
 
@@ -375,16 +609,43 @@ def process_single_workspace(ws: Path, auto=False, template_id: Optional[str] = 
     if not acquire_lock(ws):
         return {"id": ws.name, "error": "locked"}
     try:
-        # DETECTOR
-        d = ensure_detector(ws)
-        summary["detected"] = d
-        # OCR
+        detector_result = {"value": False}
+        detector_done = threading.Event()
+
+        def _detector_runner():
+            try:
+                detector_result["value"] = ensure_detector(ws)
+            except Exception:
+                detector_result["value"] = False
+            finally:
+                detector_done.set()
+
+        detector_thread = threading.Thread(
+            target=_detector_runner,
+            name=f"detector-{ws.name}",
+            daemon=True,
+        )
+        detector_thread.start()
+
         o = ensure_ocr(ws)
         summary["ocr"] = o
-        # CHOICE
+
         c = ensure_choice(ws, auto=auto)
         summary["choice"] = c
-        # RENDER
+
+        if detector_done.wait(0):
+            d = detector_result["value"]
+        else:
+            d = False
+        summary["detected"] = d
+
+        if not detector_done.is_set():
+            # Detector still running; defer render until next pass
+            return summary
+
+        if not detector_result["value"]:
+            return summary
+
         r = ensure_render(ws, template_id=effective_template) if c else False
         summary["rendered"] = r
         return summary
@@ -425,39 +686,69 @@ def main():
 
     summaries = []
     workspace_to_emit: Optional[str] = None
+    failure = False
+
+    targets: List[Path] = []
     pre_existing_ids = set()
 
+    if args.scan_workspace:
+        targets.extend(find_workspaces())
+
     if args.url:
-        # call downloader which creates workspace/<id>
         print("Calling downloader for URL...")
         pre_existing_ids = {p.name for p in find_workspaces()}
         code, out, err = run_cmd(["python", "instagram_downloader.py", args.url], timeout=600)
         if code != 0:
             print("Downloader failed:", err)
-            # still attempt scan for newly created workspaces
-        # short sleep to allow downloader to finish creating workspace
         time.sleep(1)
-        post_ids = {p.name for p in find_workspaces()}
+        all_wss = find_workspaces()
+        post_ids = {p.name for p in all_wss}
         new_ids = sorted(post_ids - pre_existing_ids)
         if new_ids:
             workspace_to_emit = new_ids[-1]
+            ws_map = {ws.name: ws for ws in all_wss}
+            for nid in new_ids:
+                if nid in ws_map:
+                    targets.append(ws_map[nid])
+        else:
+            canonical = derive_canonical_from_url(args.url)
+            matched_targets: List[Path] = []
+            if canonical:
+                canonical_lower = canonical.lower()
+                for ws in all_wss:
+                    ws_name = ws.name
+                    if ws_name.lower() == canonical_lower or ws_name.lower().startswith(f"{canonical_lower}_v"):
+                        matched_targets.append(ws)
+                        continue
+                    meta = read_meta(ws)
+                    cid = meta.get("canonical_id", "")
+                    if cid and cid.lower() == canonical_lower:
+                        matched_targets.append(ws)
+                if matched_targets:
+                    if workspace_to_emit is None:
+                        workspace_to_emit = matched_targets[0].name
+                    targets.extend(matched_targets)
+            if not matched_targets:
+                print("Downloader did not produce a new workspace for the requested URL.")
+                failure = True
 
-    if args.scan_workspace or args.url:
-        wss = find_workspaces()
-        if not wss:
-            print("No workspaces found in", WORKSPACE_BASE)
-        targets = wss
-        if args.url and not args.scan_workspace:
-            post_ids = {p.name for p in wss}
-            new_candidates = sorted(post_ids - pre_existing_ids)
-            if new_candidates:
-                targets = [ws for ws in wss if ws.name in set(new_candidates)]
+    if targets:
+        seen = set()
+        unique_targets = []
         for ws in targets:
+            if ws.name in seen:
+                continue
+            seen.add(ws.name)
+            unique_targets.append(ws)
+        for ws in unique_targets:
             print("Processing", ws.name)
             res = process_single_workspace(ws, auto=args.auto, template_id=args.template_id)
             summaries.append(res)
             if workspace_to_emit is None:
                 workspace_to_emit = ws.name
+    else:
+        if args.scan_workspace or args.url:
+            print("No workspaces queued for processing.")
 
     # write report
     rep = {"ts": ts(), "workspaces": summaries}
@@ -469,6 +760,8 @@ def main():
     print("Report written to orchestrator_report.json")
     if args.emit_json_workspace and workspace_to_emit:
         emit_workspace_info(args.emit_json_workspace, workspace_to_emit)
+    if failure and not summaries and not workspace_to_emit:
+        sys.exit(2)
 
 if __name__ == "__main__":
     main()

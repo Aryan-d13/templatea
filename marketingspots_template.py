@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 import os
 import json
-from template_engine import render_with_template
+from template_engine import TemplateEngine, TemplateRenderRequest, render_with_template
 
 DEFAULT_TEMPLATE_DIR = Path(__file__).parent / "templates" / "default"
 
@@ -41,8 +41,16 @@ def _legacy_runner(input_video_path, output_video_path, text_content, config, lo
             overrides["logo"]["enabled"] = False
         else:
             overrides["logo"]["path"] = logo_path_override
-    # shallow pass-through
-    return render_with_template(input_video_path, output_video_path, text_content, str(template_root), overrides)
+
+    request = TemplateRenderRequest(
+        input_video_path=input_video_path,
+        output_video_path=output_video_path,
+        text=text_content,
+        template_root=str(template_root),
+        overrides=overrides or None,
+    )
+    engine = TemplateEngine(request)
+    return engine.render()
 
 def process_marketingspots_template(input_video_path, output_video_path, text_content, config=None, logo_path_override=None):
     """

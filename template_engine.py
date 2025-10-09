@@ -5,6 +5,7 @@ Works with PIL + ffmpeg subprocess. Designed to be a drop-in helper
 for process_marketingspots_template in marketingspots_template.py.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import json
@@ -13,7 +14,7 @@ import subprocess
 import shlex
 import os
 import math
-from typing import Tuple, List, Set
+from typing import Tuple, List, Set, Optional, Dict
 
 # Small util to call ffprobe
 def probe_video_size(path: str) -> Tuple[int,int]:
@@ -179,7 +180,8 @@ def draw_highlights(
     y_origin: int,
     highlight_phrases: List[List[str]],
     highlight_color: str,
-    pad_px: int = 3  # <--- modular padding here
+    line_origins: Optional[List[int]] = None,
+    pad_px: int = 7  # <--- modular padding here
 ):
     """
     Draw highlight rectangles behind words/phrases—now with modular fixed padding.
@@ -200,7 +202,11 @@ def draw_highlights(
     y = y_origin
     for line_idx, line in enumerate(lines):
         words = line.split()
-        cursor_x = x_origin
+        cursor_x = (
+            line_origins[line_idx]
+            if line_origins and line_idx < len(line_origins)
+            else x_origin
+        )
 
         for word_idx, word in enumerate(words):
             bbox = draw.textbbox((cursor_x, y), word, font=font, anchor="la")
@@ -265,7 +271,10 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
     base_opts = "-hide_banner -loglevel warning"
 
     # 1) scale input preserving aspect ratio
-    cmd_scale = f"ffmpeg -y {base_opts} -i {shlex.quote(input_video_path)} -vf scale={vw}:-2 -c:v libx264 -crf 18 -preset veryfast -an {shlex.quote(tmp_scaled.name)}"
+    cmd_scale = (
+        f"ffmpeg -y {base_opts} -i {shlex.quote(input_video_path)} "
+        f"-vf scale={vw}:-2 -c:v libx264 -crf 18 -preset veryfast -c:a copy {shlex.quote(tmp_scaled.name)}"
+    )
     subprocess.run(shlex.split(cmd_scale), check=True)
 
     # compute overlay position
@@ -321,179 +330,236 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
     return True
 
 
+@dataclass
+class TemplateRenderRequest:
+    """
+    Encapsulates the minimum payload required to render a template.
+    Provides a structured hand-off point for CLIs, APIs, or pipelines.
+    """
+    input_video_path: str
+    output_video_path: str
+    text: str
+    template_root: str
+    overrides: Optional[Dict] = None
+
+
+class TemplateEngine:
+    """
+    Thin orchestrator around the functional helpers in this module.
+    Keeps render logic isolated so multiple entrypoints can reuse it.
+    """
+
+    def __init__(self, request: TemplateRenderRequest):
+        self.request = request
+
+    def render(self) -> bool:
+        root = Path(self.request.template_root)
+        cfg = load_template_cfg(root)
+        if self.request.overrides:
+            cfg.update(self.request.overrides)
+
+        canvas_w = int(cfg.get("canvas", {}).get("width", 1080))
+        canvas_h = int(cfg.get("canvas", {}).get("height", 1920))
+        image = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 255))
+        draw = ImageDraw.Draw(image)
+
+        # background
+        bg = cfg.get("background", {})
+        if bg.get("type") == "image":
+            bg_path = root / bg.get("value", "")
+            if bg_path.exists():
+                bgi = Image.open(bg_path).convert("RGBA")
+                bgi = bgi.resize((canvas_w, canvas_h), Image.LANCZOS)
+                image.paste(bgi, (0, 0))
+            else:
+                draw.rectangle([0, 0, canvas_w, canvas_h], fill=bg.get("value", "#000000"))
+        else:
+            draw.rectangle([0, 0, canvas_w, canvas_h], fill=bg.get("value", "#000000"))
+
+        # Probe input video to understand aspect
+        vid_w, vid_h = probe_video_size(self.request.input_video_path)
+
+        # Compute video box
+        video_cfg = cfg.get("video", {})
+        vw = int(canvas_w * (video_cfg.get("width_pct", 100) / 100.0))
+        aspect = vid_h and (vid_w / vid_h) or (16 / 9)
+        vh = max(2, int(vw / aspect))
+        vx = int((canvas_w - vw) // 2)
+        vertical_align = video_cfg.get("vertical_align", "center")
+        if vertical_align == "center":
+            vy = int((canvas_h - vh) // 2)
+        elif vertical_align == "top":
+            vy = 0
+        elif vertical_align == "bottom":
+            vy = canvas_h - vh
+        else:
+            vy = int(video_cfg.get("y", (canvas_h - vh) // 2))
+
+        # Text layout
+        txt_cfg = cfg.get("text", {})
+        font_rel = txt_cfg.get("font", "")
+        font_path = root / font_rel if font_rel else None
+        requested_size = int(txt_cfg.get("font_size", 120))
+        min_size = int(txt_cfg.get("min_font_size", 40))
+        max_lines = int(txt_cfg.get("max_lines", 2))
+        line_width_pct = float(txt_cfg.get("line_width_pct", 90))
+        max_width = int(canvas_w * (line_width_pct / 100.0))
+
+        # Choose font that fits within max_lines
+        if font_path and font_path.exists():
+            font = choose_font(draw, font_path, requested_size, min_size, max_lines, max_width, self.request.text)
+        else:
+            font = ImageFont.load_default()
+
+        lines, text_h = measure_wrapped_lines(self.request.text, font, max_width, draw)
+
+        # CRITICAL FIX: Position text so BOTTOM is gap_px above video top
+        gap_px = int(txt_cfg.get("position_relative_to_video", {}).get("gap_px", 20))
+        text_bottom = vy - gap_px
+        text_top = int(text_bottom - text_h)
+
+        # x origin by alignment
+        align = txt_cfg.get("align", "center")
+        align_lower = align.lower() if isinstance(align, str) else "center"
+        margin = int(canvas_w * 0.05)
+        if align_lower == "center":
+            x_origin = (canvas_w - max_width) // 2
+        elif align_lower == "right":
+            x_origin = canvas_w - margin - max_width
+        else:
+            x_origin = margin
+
+        line_origins: List[int] = []
+        for ln in lines:
+            bbox = draw.textbbox((0, 0), ln, font=font)
+            line_width = bbox[2] - bbox[0]
+            if align_lower == "center":
+                origin = int((canvas_w - line_width) // 2)
+            elif align_lower == "right":
+                origin = canvas_w - margin - line_width
+            else:
+                origin = margin
+            line_origins.append(origin)
+
+        # Highlight configuration
+        hl_cfg = txt_cfg.get("highlight", {})
+        highlight_phrases = []
+
+        if hl_cfg.get("enabled", False):
+            if hl_cfg.get("mode", "ai") == "manual":
+                # Manual mode: parse manual_words which can be words or phrases
+                manual_words = hl_cfg.get("manual_words", [])
+                highlight_phrases = parse_highlight_words(manual_words)
+            else:
+                # AI mode: use top_k from config (default 3)
+                top_k = int(hl_cfg.get("highlight_count", 3))
+                ai_words = select_highlight_words_via_ai(self.request.text, top_k=top_k)
+                highlight_phrases = [[w] for w in ai_words]  # Convert to phrase format
+
+        # Draw highlights FIRST (behind text)
+        if highlight_phrases:
+            draw_highlights(
+                draw,
+                lines,
+                font,
+                x_origin,
+                text_top,
+                highlight_phrases,
+                hl_cfg.get("default_highlight_color", "#ffde59"),
+                line_origins=line_origins,
+            )
+
+        # Draw text ON TOP of highlights
+        y = text_top
+        line_spacing_factor = 1.12
+        for i, ln in enumerate(lines):
+            line_x = line_origins[i] if i < len(line_origins) else x_origin
+            draw.text((line_x, y), ln, font=font, fill=txt_cfg.get("color", "#ffffff"))
+            bbox = draw.textbbox((0, 0), ln, font=font)
+            h = bbox[3] - bbox[1]
+            if i == 0:
+                y += h
+            else:
+                y += int(h * line_spacing_factor)
+
+        # Logo with proper aspect ratio preservation
+        logo_cfg = cfg.get("logo", {})
+        if logo_cfg.get("enabled", True):
+            logo_path = root / logo_cfg.get("path", "")
+            if logo_path.exists():
+                try:
+                    logo = Image.open(logo_path).convert("RGBA")
+
+                    sz = logo_cfg.get("size", {})
+                    target_w = sz.get("width")
+                    target_h = sz.get("height")
+
+                    # Preserve aspect ratio
+                    if target_w and target_h:
+                        target_w = int(target_w)
+                        target_h = int(target_h)
+                    elif target_w:
+                        target_w = int(target_w)
+                        aspect_ratio = logo.height / logo.width if logo.width else 1
+                        target_h = int(target_w * aspect_ratio)
+                    elif target_h:
+                        target_h = int(target_h)
+                        aspect_ratio = logo.width / logo.height if logo.height else 1
+                        target_w = int(target_h * aspect_ratio)
+                    else:
+                        target_w = logo.width
+                        target_h = logo.height
+
+                    logo = logo.resize((target_w, target_h), Image.LANCZOS)
+
+                    pos = logo_cfg.get("position", "top-right")
+                    margin = int(logo_cfg.get("margin", 36))
+
+                    if pos == "top-right":
+                        lx = canvas_w - target_w - margin
+                        ly = margin
+                    elif pos == "top-left":
+                        lx = margin
+                        ly = margin
+                    elif pos == "bottom-right":
+                        lx = canvas_w - target_w - margin
+                        ly = canvas_h - target_h - margin
+                    else:
+                        lx = margin
+                        ly = canvas_h - target_h - margin
+
+                    image.paste(logo, (lx, ly), logo)
+                except Exception:
+                    pass  # Silent fail for logo issues
+
+        # Save canvas to temp file
+        tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_canvas.close()
+        image.save(tmp_canvas.name)
+
+        # Composite canvas and video
+        composite_canvas_and_video(tmp_canvas.name, self.request.input_video_path, self.request.output_video_path, cfg)
+
+        # Cleanup
+        try:
+            os.unlink(tmp_canvas.name)
+        except Exception:
+            pass
+
+        return True
+
+
 def render_with_template(input_video_path: str, output_video_path: str, text: str, template_root: str, overrides: dict = None):
     """
     Main engine entrypoint. template_root is path to a folder containing template.json and assets.
     overrides is a dict to override keys in the template json (shallow merge).
     """
-    root = Path(template_root)
-    cfg = load_template_cfg(root)
-    if overrides:
-        cfg.update(overrides)
-
-    canvas_w = int(cfg.get("canvas", {}).get("width", 1080))
-    canvas_h = int(cfg.get("canvas", {}).get("height", 1920))
-    image = Image.new("RGBA", (canvas_w, canvas_h), (0,0,0,255))
-    draw = ImageDraw.Draw(image)
-
-    # background
-    bg = cfg.get("background", {})
-    if bg.get("type") == "image":
-        bg_path = root / bg.get("value", "")
-        if bg_path.exists():
-            bgi = Image.open(bg_path).convert("RGBA")
-            bgi = bgi.resize((canvas_w, canvas_h), Image.LANCZOS)
-            image.paste(bgi, (0,0))
-        else:
-            draw.rectangle([0,0,canvas_w,canvas_h], fill=bg.get("value","#000000"))
-    else:
-        draw.rectangle([0,0,canvas_w,canvas_h], fill=bg.get("value","#000000"))
-
-    # Probe input video to understand aspect
-    vid_w, vid_h = probe_video_size(input_video_path)
-
-    # Compute video box
-    video_cfg = cfg.get("video", {})
-    vw = int(canvas_w * (video_cfg.get("width_pct", 100)/100.0))
-    aspect = vid_h and (vid_w/vid_h) or (16/9)
-    vh = max(2, int(vw / aspect))
-    vx = int((canvas_w - vw)//2)
-    vertical_align = video_cfg.get("vertical_align", "center")
-    if vertical_align == "center":
-        vy = int((canvas_h - vh)//2)
-    elif vertical_align == "top":
-        vy = 0
-    elif vertical_align == "bottom":
-        vy = canvas_h - vh
-    else:
-        vy = int(video_cfg.get("y", (canvas_h - vh)//2))
-
-    # Text layout
-    txt_cfg = cfg.get("text", {})
-    font_rel = txt_cfg.get("font", "")
-    font_path = root / font_rel if font_rel else None
-    requested_size = int(txt_cfg.get("font_size", 120))
-    min_size = int(txt_cfg.get("min_font_size", 40))
-    max_lines = int(txt_cfg.get("max_lines", 2))
-    line_width_pct = float(txt_cfg.get("line_width_pct", 90))
-    max_width = int(canvas_w * (line_width_pct/100.0))
-    
-    # Choose font that fits within max_lines
-    if font_path and font_path.exists():
-        font = choose_font(draw, font_path, requested_size, min_size, max_lines, max_width, text)
-    else:
-        font = ImageFont.load_default()
-
-    lines, text_h = measure_wrapped_lines(text, font, max_width, draw)
-
-    # CRITICAL FIX: Position text so BOTTOM is gap_px above video top
-    gap_px = int(txt_cfg.get("position_relative_to_video", {}).get("gap_px", 20))
-    text_bottom = vy - gap_px
-    text_top = int(text_bottom - text_h)
-    
-    # x origin by alignment
-    align = txt_cfg.get("align", "center")
-    if align == "center":
-        x_origin = (canvas_w - max_width)//2
-    elif align == "left":
-        x_origin = int(canvas_w * 0.05)
-    else:
-        x_origin = canvas_w - int(canvas_w * 0.05) - max_width
-
-    # Highlight configuration
-    hl_cfg = txt_cfg.get("highlight", {})
-    highlight_phrases = []
-    
-    if hl_cfg.get("enabled", False):
-        if hl_cfg.get("mode", "ai") == "manual":
-            # Manual mode: parse manual_words which can be words or phrases
-            manual_words = hl_cfg.get("manual_words", [])
-            highlight_phrases = parse_highlight_words(manual_words)
-        else:
-            # AI mode: use top_k from config (default 3)
-            top_k = int(hl_cfg.get("highlight_count", 3))
-            ai_words = select_highlight_words_via_ai(text, top_k=top_k)
-            highlight_phrases = [[w] for w in ai_words]  # Convert to phrase format
-
-    # Draw highlights FIRST (behind text)
-    if highlight_phrases:
-        draw_highlights(draw, lines, font, x_origin, text_top, highlight_phrases, 
-                       hl_cfg.get("default_highlight_color", "#ffde59"))
-
-    # Draw text ON TOP of highlights
-    y = text_top
-    line_spacing_factor = 1.12
-    for i, ln in enumerate(lines):
-        draw.text((x_origin, y), ln, font=font, fill=txt_cfg.get("color", "#ffffff"))
-        bbox = draw.textbbox((0,0), ln, font=font)
-        h = bbox[3] - bbox[1]
-        if i == 0:
-            y += h
-        else:
-            y += int(h * line_spacing_factor)
-
-    # Logo with proper aspect ratio preservation
-    logo_cfg = cfg.get("logo", {})
-    if logo_cfg.get("enabled", True):
-        logo_path = root / logo_cfg.get("path", "")
-        if logo_path.exists():
-            try:
-                logo = Image.open(logo_path).convert("RGBA")
-                
-                sz = logo_cfg.get("size", {})
-                target_w = sz.get("width")
-                target_h = sz.get("height")
-                
-                # Preserve aspect ratio
-                if target_w and target_h:
-                    target_w = int(target_w)
-                    target_h = int(target_h)
-                elif target_w:
-                    target_w = int(target_w)
-                    aspect_ratio = logo.height / logo.width if logo.width else 1
-                    target_h = int(target_w * aspect_ratio)
-                elif target_h:
-                    target_h = int(target_h)
-                    aspect_ratio = logo.width / logo.height if logo.height else 1
-                    target_w = int(target_h * aspect_ratio)
-                else:
-                    target_w = logo.width
-                    target_h = logo.height
-                
-                logo = logo.resize((target_w, target_h), Image.LANCZOS)
-                
-                pos = logo_cfg.get("position", "top-right")
-                margin = int(logo_cfg.get("margin", 36))
-                
-                if pos == "top-right":
-                    lx = canvas_w - target_w - margin
-                    ly = margin
-                elif pos == "top-left":
-                    lx = margin
-                    ly = margin
-                elif pos == "bottom-right":
-                    lx = canvas_w - target_w - margin
-                    ly = canvas_h - target_h - margin
-                else:
-                    lx = margin
-                    ly = canvas_h - target_h - margin
-                
-                image.paste(logo, (lx, ly), logo)
-            except Exception as e:
-                pass  # Silent fail for logo issues
-
-    # Save canvas to temp file
-    tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-    tmp_canvas.close()
-    image.save(tmp_canvas.name)
-
-    # Composite canvas and video
-    composite_canvas_and_video(tmp_canvas.name, input_video_path, output_video_path, cfg)
-
-    # Cleanup
-    try:
-        os.unlink(tmp_canvas.name)
-    except Exception:
-        pass
-
-    return True
+    request = TemplateRenderRequest(
+        input_video_path=input_video_path,
+        output_video_path=output_video_path,
+        text=text,
+        template_root=template_root,
+        overrides=overrides,
+    )
+    engine = TemplateEngine(request)
+    return engine.render()

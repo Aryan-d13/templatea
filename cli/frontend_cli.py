@@ -21,6 +21,8 @@ import subprocess
 from pathlib import Path
 import sys
 import re
+import os
+from typing import List, Optional
 
 ROOT = Path.cwd()
 WORKSPACE_BASE = ROOT / "workspace"
@@ -28,6 +30,7 @@ TEMPLATES_DIR = ROOT / "templates"
 ORCHESTRATOR = ["python", "orchestrator.py"]
 
 POLL_INTERVAL = 1.0  # seconds
+DECISION_WAIT_SECONDS = int(os.getenv("CHOICE_DECISION_TIMEOUT", "30"))
 
 # emoji remover (same as orchestrator)
 _EMOJI_RE = re.compile(
@@ -61,14 +64,45 @@ def run_cmd(cmd, timeout=600):
 def list_templates():
     if not TEMPLATES_DIR.exists():
         return []
-    out = []
-    for p in sorted(TEMPLATES_DIR.glob("*.json")):
+
+    def _load_manifest(path: Path) -> Optional[dict]:
         try:
-            meta = json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
+            return None
+        if "id" not in data:
+            data["id"] = path.parent.name or path.stem
+        if "name" not in data:
+            data["name"] = data["id"]
+        data["_manifest_path"] = str(path)
+        data["_template_root"] = str(path.parent)
+        return data
+
+    manifests: List[dict] = []
+
+    # Prefer folder-based manifests (templates/<id>/template.json)
+    for child in sorted(TEMPLATES_DIR.iterdir()):
+        if not child.is_dir():
             continue
-        out.append(meta)
-    return out
+        manifest_path = child / "template.json"
+        if not manifest_path.exists():
+            alt = child / "manifest.json"
+            if alt.exists():
+                manifest_path = alt
+        if manifest_path.exists():
+            meta = _load_manifest(manifest_path)
+            if meta:
+                manifests.append(meta)
+
+    # Legacy flat manifests at templates/*.json
+    for file in sorted(TEMPLATES_DIR.glob("*.json")):
+        if file.name.lower() == "template.json":
+            continue
+        meta = _load_manifest(file)
+        if meta:
+            manifests.append(meta)
+
+    return manifests
 
 def find_workspace_by_url(url: str, timeout=30):
     """Poll workspace/ for a meta.json with matching source_url."""
@@ -234,6 +268,8 @@ def main():
         cleaned = clean_text_for_display(text)
         menu_options.append(f"AI suggestion: \"{cleaned[:120]}\"")
         menu_values.append({"type": "ai", "text": cleaned})
+
+    print(f"\nSelect the copy to use (auto mode will default to the first AI suggestion after {DECISION_WAIT_SECONDS} seconds).")
 
     # Present menu
     idx = pick_from_menu("Choose final copy option:", menu_options)
