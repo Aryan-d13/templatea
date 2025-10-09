@@ -7,6 +7,22 @@ import subprocess
 import tempfile
 import shutil
 
+def remove_background_border(frame, bbox, background_thresh=250):
+    x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
+    # Defend against out-of-bounds and minimum size
+    while h > 1 and np.all(frame[y, x:x+w] > background_thresh):     # Top edge
+        y += 1
+        h -= 1
+    while h > 1 and np.all(frame[y+h-1, x:x+w] > background_thresh): # Bottom edge
+        h -= 1
+    while w > 1 and np.all(frame[y:y+h, x] > background_thresh):     # Left edge
+        x += 1
+        w -= 1
+    while w > 1 and np.all(frame[y:y+h, x+w-1] > background_thresh): # Right edge
+        w -= 1
+    return {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+
+
 def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
     """
     Detects and extracts inner video from video-in-video format.
@@ -295,6 +311,10 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
     }
     
     print(f"Refined bbox: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+    # === Fix to remove stray static background edge ===
+    refined_bbox = remove_background_border(mid_frame, refined_bbox, background_thresh=250)
+    print(f"Final bbox after background strip removal: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+
     
     # ========================
     # 6. TEMPORAL CONSISTENCY CHECK

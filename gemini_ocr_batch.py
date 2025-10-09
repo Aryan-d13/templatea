@@ -550,7 +550,7 @@ def main() -> None:
         raise SystemExit("Set GEMINI_API_KEY (environment or .env) or use --api-key to provide a Gemini API key")
 
     perplexity_api_key = (args.perplexity_key or os.getenv("PERPLEXITY_API_KEY") or "").strip()
-    groq_api_key = args.groq_key or os.getenv("GROQ_API_KEY") or "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"
+    groq_api_key = process.env.get("GROQ_API_KEY") or args.groq_key or ""
     
     ai_copy_enabled = not args.disable_ai_copy
     if ai_copy_enabled and not perplexity_api_key:
