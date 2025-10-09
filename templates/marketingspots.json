@@ -8,8 +8,8 @@
   "schema": {
     "defaults": {
       "text.font_family": "Anton.ttf",
-      "text.color": "#FFFFFF",
-      "canvas.background_color": "#000000"
+      "text.color": "#F5F5F5",
+      "canvas.background_color": "#191B19"
     }
   }
 }

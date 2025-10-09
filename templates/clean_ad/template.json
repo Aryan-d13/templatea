@@ -1,0 +1,40 @@
+{
+  "name": "clean_ad",
+  "canvas": { "width": 1080, "height": 1920 },
+  "background": {
+    "type": "image",           
+    "value": "assets/bg.jpg"    
+  },
+  "video": {
+    "width_pct": 100,           
+    "vertical_align": "center", 
+    "x": 0, "y": 360            
+  },
+  "text": {
+    "font": "assets/Anton-Regular.ttf",
+    "font_size": 120,            
+    "min_font_size": 40,
+    "max_lines": 2,
+    "line_width_pct": 90,        
+    "position_relative_to_video": { "gap_px": 20, "anchor": "bottom" }, 
+    "color": "#ffffff",
+    "align": "center",
+    "highlight": {
+      "enabled": true,
+      "mode": "ai",              
+      "manual_words": ["skip", "today"],
+      "default_highlight_color": "#ffde59"
+    }
+  },
+  "logo": {
+    "enabled": true,
+    "path": "assets/logo.png",
+    "size": { "width": 200, "height": 80 },
+    "position": "top-right",     
+    "margin": 36
+  },
+  "render": {
+    "audio_merge": true,
+    "ffmpeg_params": "-c:v libx264 -crf 18 -preset veryfast"
+  }
+}

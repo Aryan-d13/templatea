@@ -7,23 +7,32 @@ import subprocess
 import tempfile
 import shutil
 
-def strip_white_edges(img, thresh=245):
+def strip_light_edges(img, thresh=252, coverage=0.90):
     h, w = img.shape[:2]
     top, bottom, left, right = 0, h, 0, w
 
-    # Strip white rows from top and bottom
-    while top < bottom-1 and np.all(img[top, :, :] >= thresh):
-        top += 1
-    while bottom-1 > top and np.all(img[bottom-1, :, :] >= thresh):
-        bottom -= 1
+    def is_light_row(row):
+        # If at least coverage fraction is brighter than thresh
+        return np.mean(np.all(row >= thresh, axis=1)) >= coverage
 
-    # Strip white columns from left and right
-    while left < right-1 and np.all(img[:, left, :] >= thresh):
+    def is_light_col(col):
+        return np.mean(np.all(col >= thresh, axis=1)) >= coverage
+
+    # Top
+    while top < bottom-1 and is_light_row(img[top:top+1, :, :]):
+        top += 1
+    # Bottom
+    while bottom-1 > top and is_light_row(img[bottom-1:bottom, :, :]):
+        bottom -= 1
+    # Left
+    while left < right-1 and is_light_col(img[:, left:left+1, :]):
         left += 1
-    while right-1 > left and np.all(img[:, right-1, :] >= thresh):
+    # Right
+    while right-1 > left and is_light_col(img[:, right-1:right, :]):
         right -= 1
 
     return img[top:bottom, left:right]
+
 
 
 def remove_background_border(frame, bbox, background_thresh=250):
@@ -485,7 +494,7 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
             # Mask the cropped image
             cropped = cv2.bitwise_and(cropped, cropped, mask=mask)
         # Now write as usual
-        cropped = strip_white_edges(cropped, thresh=245)
+        cropped = strip_light_edges(cropped, thresh=252, coverage=0.90)
         out.write(cropped)
       
         frame_count += 1
