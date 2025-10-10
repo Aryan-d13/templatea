@@ -58,7 +58,7 @@ except Exception:
 # Config
 WORKSPACE_BASE = Path("workspace")
 DETECTOR_THRESHOLD = "60"
-RETRY_MAX = 3
+RETRY_MAX = 99999
 RETRY_BACKOFF = 2  # multiplier
 CHOICE_DECISION_TIMEOUT = int(os.getenv("CHOICE_DECISION_TIMEOUT", "30"))
 
@@ -472,10 +472,14 @@ def ensure_choice(ws: Path, auto=False):
     )
     return False
 
+# --- in orchestrator.py ---
 def ensure_render(ws: Path, template_id: Optional[str] = None):
     render_dir = ws / "04_render"
     render_dir.mkdir(exist_ok=True)
-    canonical_final = render_dir / "final_1080x1920.mp4"
+
+    # REMOVE canonical copy usage
+    # canonical_final = render_dir / "final_1080x1920.mp4"
+
     choice = ws / "03_choice" / "choice.txt"
     cropped = ws / "01_detector" / "cropped.mp4"
     if not cropped.exists():
@@ -516,14 +520,11 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
     def record_success(source_path: Path, selected_text: str, selected_hash: str) -> bool:
         if not source_path.exists():
             return False
-        canonical_final.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.copyfile(str(source_path), str(canonical_final))
-        except shutil.SameFileError:
-            pass
+        # NEW: record relative path only, no copying
+        rel = source_path.relative_to(ws)
         now_ts = ts()
         renders_meta[template_key] = {
-            "path": str(source_path),
+            "path": str(rel),  # relative path inside workspace
             "options_signature": signature,
             "template_options": template_options,
             "text_hash": selected_hash,
@@ -533,7 +534,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         meta["render"] = {
             "template_id": effective_template_id,
             "template_options": template_options,
-            "path": str(source_path),
+            "path": str(rel),   # relative path
             "text_hash": selected_hash,
             "text": selected_text,
             "ts": now_ts,
@@ -566,6 +567,9 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         except Exception as exc:
             write_status(ws, "04_render", "failed", error=str(exc))
             return False
+
+    # legacy fallback remains unchanged...
+
 
     # fallback legacy renderer
     try:
@@ -611,21 +615,37 @@ def process_single_workspace(ws: Path, auto=False, template_id: Optional[str] = 
     try:
         detector_result = {"value": False}
         detector_done = threading.Event()
+        cropped_path = ws / "01_detector" / "cropped.mp4"
 
-        def _detector_runner():
-            try:
-                detector_result["value"] = ensure_detector(ws)
-            except Exception:
-                detector_result["value"] = False
-            finally:
-                detector_done.set()
+        detector_pre_completed = cropped_path.exists()
+        if detector_pre_completed:
+            status_file = ws / "01_detector.status"
+            if status_file.exists():
+                try:
+                    info = json.loads(status_file.read_text(encoding="utf-8"))
+                    detector_pre_completed = info.get("status") == "success"
+                except Exception:
+                    detector_pre_completed = False
 
-        detector_thread = threading.Thread(
-            target=_detector_runner,
-            name=f"detector-{ws.name}",
-            daemon=True,
-        )
-        detector_thread.start()
+        if detector_pre_completed:
+            detector_result["value"] = True
+            detector_done.set()
+            detector_thread = None
+        else:
+            def _detector_runner():
+                try:
+                    detector_result["value"] = ensure_detector(ws)
+                except Exception:
+                    detector_result["value"] = False
+                finally:
+                    detector_done.set()
+
+            detector_thread = threading.Thread(
+                target=_detector_runner,
+                name=f"detector-{ws.name}",
+                daemon=True,
+            )
+            detector_thread.start()
 
         o = ensure_ocr(ws)
         summary["ocr"] = o

@@ -166,5 +166,45 @@ def process_workspace(
     _publish_status_snapshot(workspace_id)
     return result
 
+"""
+Add this function to api/tasks.py after the process_workspace function
+"""
 
-__all__ = ["events", "process_workspace", "run_orchestrator_for_url"]
+def clear_render_cache(workspace_id: str) -> None:
+    """
+    Clear cached renders for a workspace to force fresh rendering.
+    This should be called when a new choice is submitted.
+    """
+    ws_path = storage.resolve_workspace(workspace_id)
+    if not ws_path.exists():
+        return
+    
+    render_dir = ws_path / "04_render"
+    if not render_dir.exists():
+        return
+    
+    # Remove the templates cache directory
+    templates_dir = render_dir / "templates"
+    if templates_dir.exists():
+        try:
+            import shutil
+            shutil.rmtree(templates_dir)
+            LOG.info("Cleared render cache for workspace %s", workspace_id)
+        except Exception as exc:
+            LOG.warning("Failed to clear render cache for %s: %s", workspace_id, exc)
+    
+    # Also remove the canonical final video to force re-render
+    final_video = render_dir / "final_1080x1920.mp4"
+    if final_video.exists():
+        try:
+            final_video.unlink()
+            LOG.info("Removed final video for workspace %s", workspace_id)
+        except Exception as exc:
+            LOG.warning("Failed to remove final video for %s: %s", workspace_id, exc)
+
+
+# Update the __all__ export at the bottom:
+__all__ = ["events", "process_workspace", "run_orchestrator_for_url", "clear_render_cache"]
+
+
+# __all__ = ["events", "process_workspace", "run_orchestrator_for_url"]

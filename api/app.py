@@ -312,6 +312,10 @@ async def _reprocess_workspace(workspace_id: str) -> None:
         pass
 
 
+"""
+Replace the update_choice function in api/app.py with this version
+"""
+
 @router.post(
     "/workspaces/{workspace_id}/choice",
     dependencies=[Depends(verify_api_key)],
@@ -323,6 +327,11 @@ async def update_choice(workspace_id: str, body: ChoiceRequest, background: Back
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
     _write_choice_file(workspace_id, body)
+    
+    # IMPORTANT: Clear render cache to force fresh render with new copy
+    from .tasks import clear_render_cache
+    clear_render_cache(workspace_id)
+    
     storage.index_workspace(ws_path)
     background.add_task(_reprocess_workspace, workspace_id)
 

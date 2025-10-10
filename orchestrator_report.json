@@ -1,53 +1,13 @@
 {
-  "ts": "2025-10-09T22:08:03.934100Z",
+  "ts": "2025-10-10T07:15:57.807608Z",
   "workspaces": [
     {
-      "id": "DM8C79mtFGa",
+      "id": "DPijh4hE5VR",
       "downloaded": false,
-      "detected": true,
+      "detected": false,
       "ocr": true,
-      "choice": true,
-      "rendered": true
-    },
-    {
-      "id": "DN8Dicfki5i",
-      "downloaded": false,
-      "detected": true,
-      "ocr": true,
-      "choice": true,
-      "rendered": true
-    },
-    {
-      "id": "DNp4dHio2dn",
-      "downloaded": false,
-      "detected": true,
-      "ocr": true,
-      "choice": true,
-      "rendered": true
-    },
-    {
-      "id": "DPHk2CsjFPD",
-      "downloaded": false,
-      "detected": true,
-      "ocr": true,
-      "choice": true,
-      "rendered": true
-    },
-    {
-      "id": "DPhRcbuk28N",
-      "error": "locked"
-    },
-    {
-      "id": "DPlhNwgk6s8",
-      "downloaded": false,
-      "detected": true,
-      "ocr": true,
-      "choice": true,
-      "rendered": true
-    },
-    {
-      "id": "DPlPknsk5oq",
-      "error": "locked"
+      "choice": false,
+      "rendered": false
     }
   ]
 }
