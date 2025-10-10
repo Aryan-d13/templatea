@@ -38,6 +38,32 @@ from .tasks import process_workspace, run_orchestrator_for_url
 API_PREFIX = "/api/v1"
 API_KEY = os.getenv("API_KEY")
 
+router = APIRouter(prefix=API_PREFIX)
+
+
+@router.get("/templates")
+async def list_templates() -> JSONResponse:
+    return JSONResponse(template_registry.list_templates())
+
+@router.get("/templates/{template_id}")
+async def get_template(template_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(template_registry.get_template(template_id))
+    except template_registry.TemplateNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+@router.get("/template-assets/{template_id}/{path:path}")
+async def get_template_asset(template_id: str, path: str) -> Response:
+    try:
+        p = template_registry.asset_path(template_id, path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="Asset not found")
+    media_type, _ = mimetypes.guess_type(p.name)
+    return FileResponse(str(p), media_type=media_type or "application/octet-stream")
+
+
 
 def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
     if API_KEY and x_api_key != API_KEY:
@@ -75,9 +101,30 @@ def file_url(workspace_id: str, key: str) -> str:
     return f"{API_PREFIX}/workspaces/{workspace_id}/files/{key}"
 
 
+# --- in app.py ---
 def serialize_files(workspace_id: str, detail: bool = False) -> Dict[str, Dict[str, Any]]:
     ws_path = storage.resolve_workspace(workspace_id)
     file_map = storage.list_workspace_files(ws_path)
+
+    # NEW: resolve final from meta.render.path, not FILE_KEY_MAP
+    meta = storage.read_meta(workspace_id) or {}
+    final_entry: Dict[str, Any] = {"exists": False, "url": None}
+
+    rel_final = None
+    if meta.get("render", {}) and meta["render"].get("path"):
+        rel_final = meta["render"]["path"]
+        target = ws_path / rel_final
+        if target.exists():
+            final_entry["exists"] = True
+            final_entry["url"] = file_url(workspace_id, "final")
+            if detail:
+                try:
+                    stat = target.stat()
+                    final_entry["size"] = stat.st_size
+                    final_entry["modified_at"] = datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"
+                except Exception:
+                    pass
+
     result: Dict[str, Dict[str, Any]] = {}
     for key, file_info in file_map.items():
         entry: Dict[str, Any] = {"exists": file_info["exists"], "url": None}
@@ -91,7 +138,12 @@ def serialize_files(workspace_id: str, detail: bool = False) -> Dict[str, Dict[s
                 except Exception:
                     pass
         result[key] = entry
+
+    # Always expose the final render entry, even if legacy FILE_KEY_MAP did not include it.
+    result["final"] = final_entry
+
     return result
+
 
 
 def build_workspace_response(workspace: Dict[str, Any]) -> Dict[str, Any]:
@@ -167,9 +219,6 @@ def range_stream(path: Path, start: int, end: int, chunk_size: int = 1024 * 1024
             yield chunk
 
 
-router = APIRouter(prefix=API_PREFIX)
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     storage.ensure_db()
@@ -199,9 +248,109 @@ async def get_workspace_detail(workspace_id: str) -> JSONResponse:
     detail = build_workspace_detail(workspace_id)
     return JSONResponse(detail)
 
+@router.get("/workspaces/{workspace_id}/renders")
+async def list_renders(workspace_id: str) -> JSONResponse:
+    ws = storage.get_workspace(workspace_id)
+    if ws is None:
+        ws_path = storage.resolve_workspace(workspace_id)
+        if not ws_path.exists():
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        storage.index_workspace(ws_path)
+        ws = storage.get_workspace(workspace_id)
+        if ws is None:
+            raise HTTPException(status_code=404, detail="Workspace not indexed")
+    meta = ws.get("meta") or {}
+    renders = meta.get("renders") or {}
+    out = []
+    for tid, info in renders.items():
+        rel = info.get("path")
+        exists = bool(rel) and (storage.resolve_workspace(workspace_id) / rel).exists()
+        out.append({
+            "template_id": tid,
+            "exists": exists,
+            "url": f"{API_PREFIX}/workspaces/{workspace_id}/render/{tid}" if exists else None,
+            "text": info.get("text"),
+            "text_hash": info.get("text_hash"),
+            "options_signature": info.get("options_signature"),
+            "ts": info.get("ts"),
+        })
+    return JSONResponse(out)
+
+@router.get("/workspaces/{workspace_id}/render/{template_id}")
+async def get_render_variant(workspace_id: str, template_id: str, request: Request) -> Response:
+    ws_path = storage.resolve_workspace(workspace_id)
+    meta = storage.read_meta(workspace_id) or {}
+    info = (meta.get("renders") or {}).get(template_id)
+    if not info or not info.get("path"):
+        raise HTTPException(status_code=404, detail="Render variant not found")
+    target = ws_path / info["path"]
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Render file missing")
+    file_size = target.stat().st_size
+    rng = request.headers.get("range")
+    rng_tuple = parse_range(rng, file_size)
+    media_type, _ = mimetypes.guess_type(target.name)
+    if rng_tuple:
+        start, end = rng_tuple
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(end - start + 1),
+        }
+        return StreamingResponse(
+            range_stream(target, start, end),
+            media_type=media_type or "application/octet-stream",
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            headers=headers,
+        )
+    return FileResponse(str(target), media_type=media_type or "application/octet-stream", filename=target.name)
+
 
 @router.get("/workspaces/{workspace_id}/files/{file_key}")
+@router.get("/workspaces/{workspace_id}/files/{file_key}")
+@router.get("/workspaces/{workspace_id}/files/{file_key}")
 async def get_workspace_file(workspace_id: str, file_key: str, request: Request) -> Response:
+    ws_path = storage.resolve_workspace(workspace_id)
+
+    if file_key == "final":
+        meta = storage.read_meta(workspace_id) or {}
+        rel = (meta.get("render") or {}).get("path")
+        if not rel:
+            raise HTTPException(status_code=404, detail="Final not available")
+        target = ws_path / rel
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        file_size = target.stat().st_size
+        rng = request.headers.get("range")
+        rng_tuple = parse_range(rng, file_size)
+        media_type, _ = mimetypes.guess_type(target.name)
+        if rng_tuple:
+            start, end = rng_tuple
+            headers = {
+                "Content-Range": f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(end - start + 1),
+            }
+            return StreamingResponse(
+                range_stream(target, start, end),
+                media_type=media_type or "application/octet-stream",
+                status_code=status.HTTP_206_PARTIAL_CONTENT,
+                headers=headers,
+            )
+        return FileResponse(str(target), media_type=media_type or "application/octet-stream", filename=target.name)
+
+    # existing behavior for other keys…
+    if file_key not in storage.FILE_KEY_MAP:
+        raise HTTPException(status_code=404, detail="Unknown file key")
+    # ... your current logic continues here
+
+
+    # default behavior for other keys (unchanged)
+    if file_key not in storage.FILE_KEY_MAP:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown file key")
+    target = ws_path / storage.FILE_KEY_MAP[file_key]
+    # original logic continues...
+
     if file_key not in storage.FILE_KEY_MAP:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown file key")
 
@@ -343,6 +492,74 @@ async def list_templates() -> JSONResponse:
     manifests = template_registry.list_templates()
     return JSONResponse(manifests)
 
+# List all renders (stable, URL-only, no paths leaked)
+@router.get("/workspaces/{workspace_id}/renders")
+async def list_renders(workspace_id: str) -> JSONResponse:
+    ws = storage.get_workspace(workspace_id)
+    if ws is None:
+        ws_path = storage.resolve_workspace(workspace_id)
+        if not ws_path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+        storage.index_workspace(ws_path)
+        ws = storage.get_workspace(workspace_id)
+        if ws is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not indexed")
+
+    meta = ws.get("meta") or {}
+    renders = meta.get("renders") or {}
+    items = []
+    for template_id, info in renders.items():
+        rel = info.get("path")
+        exists = False
+        if rel:
+            exists = (storage.resolve_workspace(workspace_id) / rel).exists()
+        items.append({
+            "template_id": template_id,
+            "exists": bool(exists),
+            "url": f"{API_PREFIX}/workspaces/{workspace_id}/render/{template_id}" if exists else None,
+            "text": info.get("text"),
+            "text_hash": info.get("text_hash"),
+            "options_signature": info.get("options_signature"),
+            "template_options": info.get("template_options"),
+            "ts": info.get("ts"),
+        })
+    return JSONResponse(items)
+
+
+# Stream a specific template's render
+@router.get("/workspaces/{workspace_id}/render/{template_id}")
+async def get_render_variant(workspace_id: str, template_id: str, request: Request) -> Response:
+    ws_path = storage.resolve_workspace(workspace_id)
+    meta = storage.read_meta(workspace_id) or {}
+    info = (meta.get("renders") or {}).get(template_id)
+    if not info or not info.get("path"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Render variant not found")
+    target = ws_path / info["path"]
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Render file missing")
+    file_size = target.stat().st_size
+    range_header = request.headers.get("range")
+    range_tuple = parse_range(range_header, file_size)
+    media_type, _ = mimetypes.guess_type(target.name)
+    if range_tuple:
+        start, end = range_tuple
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(end - start + 1),
+        }
+        return StreamingResponse(
+            range_stream(target, start, end),
+            media_type=media_type or "application/octet-stream",
+            status_code=status.HTTP_206_PARTIAL_CONTENT,
+            headers=headers,
+        )
+    return FileResponse(
+        path=str(target),
+        media_type=media_type or "application/octet-stream",
+        filename=target.name,
+    )
+
 
 @router.get("/templates/{template_id}")
 async def get_template(template_id: str) -> JSONResponse:
@@ -406,6 +623,8 @@ async def workspace_socket(websocket: WebSocket, workspace_id: str) -> None:
         await asyncio.gather(poller, forwarder, return_exceptions=True)
 
 
+APP = FastAPI(title="Templatea Backend", version="1.0.0", lifespan=lifespan)
+# ... CORS, middleware, etc.
 APP.include_router(router)
 
 __all__ = ["APP"]

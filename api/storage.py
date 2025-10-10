@@ -33,7 +33,8 @@ FILE_KEY_MAP: Dict[str, Path] = {
     "choice": Path("03_choice/choice.txt"),
     "manual": Path("03_choice/manual.txt"),
     "choice_status": Path("03_choice.status"),
-    "final": Path("04_render/final_1080x1920.mp4"),
+    # "final": Path("04_render/final_1080x1920.mp4"), No longer used by API
+    # "render_status": Path("04_render.status"),
     "render_status": Path("04_render.status"),
     "logs": Path("logs"),
 }

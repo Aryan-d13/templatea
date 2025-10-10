@@ -51,7 +51,7 @@ def remove_background_border(frame, bbox, background_thresh=250):
     return {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
 
 
-def detect_and_crop_video(input_path, output_path, confidence_threshold=60.0):
+def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
     """
     Detects and extracts inner video from video-in-video format.
     
@@ -560,7 +560,7 @@ if __name__ == "__main__":
     
     input_video = sys.argv[1]
     output_video = sys.argv[2]
-    threshold = float(sys.argv[3]) if len(sys.argv) > 3 else 60.0
+    threshold = float(sys.argv[3]) if len(sys.argv) > 3 else 10.0
     
     result = detect_and_crop_video(input_video, output_video, threshold)
     

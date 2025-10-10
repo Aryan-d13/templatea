@@ -1,16 +1,22 @@
-# Templatea/templates/marketing_spots/__init__.py
+# templates/LOM/__init__.py
 from pathlib import Path
-from template_engine import TemplateEngine, TemplateRenderRequest
+from typing import Optional, Dict, Any
+from template_engine import render_with_template
 
-TEMPLATE_ROOT = Path(__file__).parent
-
-def render(input_video, output_video, text, options=None):
-    request = TemplateRenderRequest(
-        input_video_path=input_video,
-        output_video_path=output_video,
+def process_lom_template(input_video_path: str,
+                         output_video_path: str,
+                         text: str,
+                         options: Optional[Dict[str, Any]] = None):
+    """
+    Registry-compatible renderer entrypoint for LOM.
+    Delegates to the generic engine with this folder as template_root.
+    """
+    template_root = Path(__file__).parent
+    overrides = options or {}
+    return render_with_template(
+        input_video_path=input_video_path,
+        output_video_path=output_video_path,
         text=text,
-        template_root=str(TEMPLATE_ROOT),
-        overrides=options,
+        template_root=str(template_root),
+        overrides=overrides
     )
-    engine = TemplateEngine(request)
-    return engine.render()

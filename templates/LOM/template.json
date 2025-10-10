@@ -1,7 +1,8 @@
 {
     "id": "LOM",
+    "renderer" :{
     "module": "templates.LOM",
-    "entrypoint": "process_lom_template",
+    "entrypoint": "process_lom_template"},
     "description": "Legend Of Marketing template with bold captions.",
 
     "name": "Legend Of Marketing",

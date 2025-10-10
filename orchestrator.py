@@ -19,7 +19,11 @@ Notes:
 import argparse, subprocess, json, time, os, hashlib, shutil, sys, threading
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
+# near top
+from api.template_registry import get_renderer_func, TemplateNotFound as TemplateRegistryError
+from gemini_ocr_batch import generate_ai_one_liners
+
 import re
 _EMOJI_RE = re.compile(
     "["                                    # character ranges
@@ -40,6 +44,12 @@ def clean_text_for_render(text: str) -> str:
         return ""
     return _EMOJI_RE.sub("", text).strip()
 
+
+def normalize_dashes(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    return text.replace("\u2014", ", ").replace("\u2013", ", ")
+
 def derive_canonical_from_url(url: Optional[str]) -> Optional[str]:
     if not url:
         return None
@@ -57,7 +67,7 @@ except Exception:
 
 # Config
 WORKSPACE_BASE = Path("workspace")
-DETECTOR_THRESHOLD = "60"
+DETECTOR_THRESHOLD = "10.0"  # float as string
 RETRY_MAX = 99999
 RETRY_BACKOFF = 2  # multiplier
 CHOICE_DECISION_TIMEOUT = int(os.getenv("CHOICE_DECISION_TIMEOUT", "30"))
@@ -161,11 +171,80 @@ def ensure_detector(ws: Path):
     write_status(ws, "01_detector", "failed", error="max retries")
     return False
 
-def ensure_ocr(ws: Path):
+def ensure_ocr(ws: Path, regen_ai_only: bool = False):
     ocr_dir = ws / "02_ocr"
     ocr_dir.mkdir(exist_ok=True)
     ocr_txt = ocr_dir / "ocr.txt"
     ai_json = ocr_dir / "ai_copies.json"
+
+    if regen_ai_only:
+        if ocr_txt.exists():
+            try:
+                caption_text = normalize_dashes(ocr_txt.read_text(encoding="utf-8").strip())
+            except Exception as exc:
+                print(f"[WARN] Failed to read cached OCR text: {exc}")
+                caption_text = ""
+        else:
+            caption_text = ""
+
+        if caption_text:
+            raw_caption = ws / "00_raw" / "raw_caption.txt"
+            downloader_caption = ""
+            if raw_caption.exists():
+                try:
+                    downloader_caption = normalize_dashes(raw_caption.read_text(encoding="utf-8-sig").strip())
+                except Exception as exc:
+                    print(f"[WARN] Failed to read raw caption {raw_caption}: {exc}")
+
+            history_dir = ocr_dir / "history"
+            try:
+                history_dir.mkdir(exist_ok=True)
+            except Exception:
+                pass
+            if ai_json.exists():
+                timestamp_label = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+                try:
+                    shutil.move(str(ai_json), str(history_dir / f"ai_copies_refresh_{timestamp_label}.json"))
+                except Exception:
+                    pass
+
+            perplexity_key = os.getenv("PERPLEXITY_API_KEY", "")
+            groq_key = os.getenv("GROQ_API_KEY", "")
+            if not groq_key:
+                print("[WARN] GROQ_API_KEY missing; falling back to full OCR run.")
+            else:
+                try:
+                    ai_result = generate_ai_one_liners(
+                        caption_text,
+                        perplexity_key,
+                        groq_key,
+                        downloader_caption=downloader_caption or None,
+                    )
+                    sanitized = []
+                    for idx, line in enumerate(ai_result.get("one_liners", []), start=1):
+                        clean_line = normalize_dashes(str(line).strip())
+                        if not clean_line:
+                            continue
+                        sanitized.append(
+                            {
+                                "id": f"ai-copy-{idx}",
+                                "text": clean_line,
+                                "source": ai_result.get("source") or "groq_direct",
+                            }
+                        )
+                    if not sanitized and caption_text:
+                        sanitized.append(
+                            {"id": "fallback-1", "text": caption_text[:140], "source": "ocr_cached"}
+                        )
+                    with open(ai_json, "w", encoding="utf8") as f:
+                        json.dump(sanitized, f, indent=2)
+                    write_status(ws, "02_ocr", "success", extra={"mode": "ai_refresh"})
+                    return True
+                except Exception as exc:
+                    print(f"[WARN] AI refresh failed, falling back to full OCR run: {exc}")
+        else:
+            print("[WARN] No cached OCR text found; running full OCR.")
+        regen_ai_only = False
 
     if ocr_txt.exists() or ai_json.exists():
         history_dir = ocr_dir / "history"
@@ -244,7 +323,7 @@ def ensure_ocr(ws: Path):
                 if isinstance(report, list) and len(report) > 0:
                     result = report[0]
                     # effective_caption set by gemini script; fallback to 'text'
-                    caption_text = result.get("effective_caption") or result.get("text") or ""
+                    caption_text = normalize_dashes(result.get("effective_caption") or result.get("text") or "")
                     # write OCR text (effective caption)
                     with open(ocr_txt, "w", encoding="utf8") as f:
                         f.write(caption_text)
@@ -287,7 +366,7 @@ def ensure_ocr(ws: Path):
         raw_caption = ws / "00_raw" / "raw_caption.txt"
         if raw_caption.exists():
             try:
-                text = raw_caption.read_text(encoding="utf-8-sig").strip()
+                text = normalize_dashes(raw_caption.read_text(encoding="utf-8-sig").strip())
                 with open(ocr_txt, "w", encoding="utf8") as f:
                     f.write(text)
                 ac = [{"id": "fallback-1", "text": text[:140] if len(text) > 140 else text, "source": "raw_caption_fallback"}]
@@ -307,16 +386,25 @@ def ensure_ocr(ws: Path):
     return False
 
 
-def ensure_choice(ws: Path, auto=False):
+def ensure_choice(ws: Path, auto=False, force_refresh: bool = False):
     choice_dir = ws / "03_choice"
     choice_dir.mkdir(exist_ok=True)
     choice_file = choice_dir / "choice.txt"
     manual_file = choice_dir / "manual.txt"
 
+    if force_refresh:
+        for stale in (choice_file, manual_file):
+            try:
+                if stale.exists():
+                    stale.unlink()
+            except Exception:
+                pass
+
     def finalize_choice(text: str, status_value: str, source: str) -> bool:
         if not text:
             return False
-        cleaned = text.strip()
+        normalized = normalize_dashes(text or "")
+        cleaned = clean_text_for_render(normalized)
         if not cleaned:
             return False
         with open(choice_file, "w", encoding="utf8") as f:
@@ -338,6 +426,14 @@ def ensure_choice(ws: Path, auto=False):
                 text = choice_file.read_text(encoding="utf-8-sig")
             except Exception:
                 text = ""
+            normalized = normalize_dashes(text)
+            cleaned = clean_text_for_render(normalized)
+            if cleaned and cleaned != text:
+                try:
+                    choice_file.write_text(cleaned, encoding="utf8")
+                    text = cleaned
+                except Exception:
+                    pass
             write_status(
                 ws,
                 "03_choice",
@@ -369,7 +465,7 @@ def ensure_choice(ws: Path, auto=False):
 
     ocr_txt_path = ws / "02_ocr" / "ocr.txt"
     try:
-        ocr_text = ocr_txt_path.read_text(encoding="utf-8-sig").strip()
+        ocr_text = clean_text_for_render(normalize_dashes(ocr_txt_path.read_text(encoding="utf-8-sig").strip()))
     except Exception:
         ocr_text = ""
 
@@ -388,21 +484,25 @@ def ensure_choice(ws: Path, auto=False):
                             or item.get("one_liner")
                         )
                         if text_value:
+                            sanitized = clean_text_for_render(normalize_dashes(str(text_value)))
+                            if sanitized:
+                                ai_candidates.append(
+                                    {
+                                        "id": item.get("id") or f"ai-{idx}",
+                                        "text": sanitized,
+                                        "source": item.get("source") or "ai",
+                                    }
+                                )
+                    else:
+                        sanitized = clean_text_for_render(normalize_dashes(str(item)))
+                        if sanitized:
                             ai_candidates.append(
                                 {
-                                    "id": item.get("id") or f"ai-{idx}",
-                                    "text": str(text_value).strip(),
-                                    "source": item.get("source") or "ai",
+                                    "id": f"ai-{idx}",
+                                    "text": sanitized,
+                                    "source": "ai",
                                 }
                             )
-                    else:
-                        ai_candidates.append(
-                            {
-                                "id": f"ai-{idx}",
-                                "text": str(item).strip(),
-                                "source": "ai",
-                            }
-                        )
         except Exception:
             ai_candidates = []
 
@@ -473,7 +573,7 @@ def ensure_choice(ws: Path, auto=False):
     return False
 
 # --- in orchestrator.py ---
-def ensure_render(ws: Path, template_id: Optional[str] = None):
+def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bool = False):
     render_dir = ws / "04_render"
     render_dir.mkdir(exist_ok=True)
 
@@ -492,7 +592,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
     meta = read_meta(ws)
     effective_template_id = template_id or meta.get("template_id")
     template_options = dict(meta.get("template_options", {}))
-    raw_text = choice.read_text(encoding="utf-8-sig")
+    raw_text = normalize_dashes(choice.read_text(encoding="utf-8-sig"))
     text_value = clean_text_for_render(raw_text)
     text_hash = hashlib.sha256(text_value.encode("utf-8")).hexdigest() if text_value else "empty"
 
@@ -517,14 +617,22 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
     existing_entry = renders_meta.get(template_key, {})
     existing_path = Path(existing_entry.get("path", "")) if existing_entry.get("path") else template_final
 
-    def record_success(source_path: Path, selected_text: str, selected_hash: str) -> bool:
+    if force_refresh:
+        existing_entry = {}
+        try:
+            if template_final.exists():
+                template_final.unlink()
+        except Exception:
+            pass
+
+    # inside ensure_render(...) in orchestrator
+    def record_success(source_path: Path, selected_text: str, selected_hash: str) -> bool:  
         if not source_path.exists():
             return False
-        # NEW: record relative path only, no copying
         rel = source_path.relative_to(ws)
         now_ts = ts()
         renders_meta[template_key] = {
-            "path": str(rel),  # relative path inside workspace
+            "path": str(rel),
             "options_signature": signature,
             "template_options": template_options,
             "text_hash": selected_hash,
@@ -534,7 +642,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         meta["render"] = {
             "template_id": effective_template_id,
             "template_options": template_options,
-            "path": str(rel),   # relative path
+            "path": str(rel),
             "text_hash": selected_hash,
             "text": selected_text,
             "ts": now_ts,
@@ -543,16 +651,28 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         write_status(ws, "04_render", "success")
         return True
 
+
     if (
-        existing_path.exists()
+        not force_refresh
+        and existing_path.exists()
         and existing_entry.get("options_signature") == signature
         and existing_entry.get("text_hash") == text_hash
     ):
         return record_success(existing_path, text_value, text_hash)
 
-    if effective_template_id and get_renderer_func:
+    registry_renderer_factory = None
+    if effective_template_id:
+        registry_renderer_factory = get_renderer_func
+        if registry_renderer_factory is None:
+            try:
+                from api.template_registry import get_renderer_func as _grf  # type: ignore
+                registry_renderer_factory = _grf
+            except Exception:
+                registry_renderer_factory = None
+
+    if effective_template_id and registry_renderer_factory:
         try:
-            renderer = get_renderer_func(effective_template_id)
+            renderer = registry_renderer_factory(effective_template_id)
             ok = renderer(str(cropped), str(template_final), text_value, template_options)
             if ok is None or ok is True:
                 if record_success(template_final, text_value, text_hash):
@@ -567,6 +687,15 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         except Exception as exc:
             write_status(ws, "04_render", "failed", error=str(exc))
             return False
+
+    if effective_template_id and not registry_renderer_factory:
+        write_status(
+            ws,
+            "04_render",
+            "failed",
+            error=f"Template registry unavailable for template '{effective_template_id}'",
+        )
+        return False
 
     # legacy fallback remains unchanged...
 
@@ -593,19 +722,29 @@ def ensure_render(ws: Path, template_id: Optional[str] = None):
         write_status(ws, "04_render", "failed", error=err)
         return False
 
-def process_single_workspace(ws: Path, auto=False, template_id: Optional[str] = None):
+def process_single_workspace(ws: Path, auto: bool = False, template_id: Optional[str] = None, reuse_existing: bool = False):
     """Run all steps for single workspace path. Returns dict summary."""
     summary = {
         "id": ws.name,
-        "downloaded": False,
+        "downloaded": not reuse_existing,
         "detected": False,
         "ocr": False,
         "choice": False,
         "rendered": False,
     }
     meta = read_meta(ws)
+    meta_changed = False
     if template_id and meta.get("template_id") != template_id:
         meta["template_id"] = template_id
+        meta_changed = True
+    if not meta.get("canonical_id"):
+        meta["canonical_id"] = ws.name
+        meta_changed = True
+    meta["last_run"] = ts()
+    meta["last_auto"] = auto
+    meta["last_reuse"] = bool(reuse_existing)
+    meta_changed = True
+    if meta_changed:
         write_meta(ws, meta)
     effective_template = meta.get("template_id")
     # download already handled by instagram_downloader or creator; if meta missing and url provided, caller should have run downloader.
@@ -647,11 +786,27 @@ def process_single_workspace(ws: Path, auto=False, template_id: Optional[str] = 
             )
             detector_thread.start()
 
-        o = ensure_ocr(ws)
+        o = ensure_ocr(ws, regen_ai_only=reuse_existing)
         summary["ocr"] = o
 
-        c = ensure_choice(ws, auto=auto)
+        choice_path = ws / "03_choice" / "choice.txt"
+        c = ensure_choice(ws, auto=auto, force_refresh=auto or reuse_existing)
         summary["choice"] = c
+
+        choice_text_clean = ""
+        if choice_path.exists():
+            try:
+                choice_text_clean = clean_text_for_render(
+                    normalize_dashes(choice_path.read_text(encoding="utf-8"))
+                )
+            except Exception:
+                choice_text_clean = ""
+
+        template_key = effective_template or "legacy_default"
+        previous_entry = (meta.get("renders") or {}).get(template_key, {})
+        previous_hash = previous_entry.get("text_hash") if previous_entry else None
+        desired_hash = hashlib.sha256(choice_text_clean.encode("utf-8")).hexdigest() if choice_text_clean else "empty"
+        force_render = reuse_existing or previous_hash != desired_hash
 
         if detector_done.wait(0):
             d = detector_result["value"]
@@ -660,14 +815,12 @@ def process_single_workspace(ws: Path, auto=False, template_id: Optional[str] = 
         summary["detected"] = d
 
         if not detector_done.is_set():
-            # Detector still running; defer render until next pass
-            return summary
+            # If detector still running, wait briefly so we can continue in this pass.
+            detector_done.wait(timeout=1)
 
-        if not detector_result["value"]:
-            return summary
-
-        r = ensure_render(ws, template_id=effective_template) if c else False
-        summary["rendered"] = r
+        if detector_done.is_set() and detector_result["value"]:
+            r = ensure_render(ws, template_id=effective_template, force_refresh=force_render) if c else False
+            summary["rendered"] = r
         return summary
     finally:
         release_lock(ws)
@@ -708,61 +861,61 @@ def main():
     workspace_to_emit: Optional[str] = None
     failure = False
 
-    targets: List[Path] = []
-    pre_existing_ids = set()
+    existing_workspaces = find_workspaces()
+    targets_map: Dict[Path, bool] = {}
 
     if args.scan_workspace:
-        targets.extend(find_workspaces())
+        for ws in existing_workspaces:
+            targets_map.setdefault(ws, True)
 
     if args.url:
-        print("Calling downloader for URL...")
-        pre_existing_ids = {p.name for p in find_workspaces()}
-        code, out, err = run_cmd(["python", "instagram_downloader.py", args.url], timeout=600)
-        if code != 0:
-            print("Downloader failed:", err)
-        time.sleep(1)
-        all_wss = find_workspaces()
-        post_ids = {p.name for p in all_wss}
-        new_ids = sorted(post_ids - pre_existing_ids)
-        if new_ids:
-            workspace_to_emit = new_ids[-1]
-            ws_map = {ws.name: ws for ws in all_wss}
-            for nid in new_ids:
-                if nid in ws_map:
-                    targets.append(ws_map[nid])
+        canonical = derive_canonical_from_url(args.url)
+        matched_targets: List[Path] = []
+        if canonical:
+            canonical_lower = canonical.lower()
+            for ws in existing_workspaces:
+                ws_name_lower = ws.name.lower()
+                if ws_name_lower == canonical_lower or ws_name_lower.startswith(f"{canonical_lower}_v"):
+                    matched_targets.append(ws)
+                    continue
+                meta = read_meta(ws)
+                cid = (meta.get("canonical_id") or "").lower()
+                if cid == canonical_lower:
+                    matched_targets.append(ws)
+
+        if matched_targets:
+            if workspace_to_emit is None:
+                workspace_to_emit = matched_targets[0].name
+            print(f"Reusing existing workspace(s): {', '.join(ws.name for ws in matched_targets)}")
+            for ws in matched_targets:
+                targets_map[ws] = True
         else:
-            canonical = derive_canonical_from_url(args.url)
-            matched_targets: List[Path] = []
-            if canonical:
-                canonical_lower = canonical.lower()
-                for ws in all_wss:
-                    ws_name = ws.name
-                    if ws_name.lower() == canonical_lower or ws_name.lower().startswith(f"{canonical_lower}_v"):
-                        matched_targets.append(ws)
-                        continue
-                    meta = read_meta(ws)
-                    cid = meta.get("canonical_id", "")
-                    if cid and cid.lower() == canonical_lower:
-                        matched_targets.append(ws)
-                if matched_targets:
-                    if workspace_to_emit is None:
-                        workspace_to_emit = matched_targets[0].name
-                    targets.extend(matched_targets)
-            if not matched_targets:
+            print("Calling downloader for URL...")
+            pre_existing_ids = {p.name for p in existing_workspaces}
+            code, out, err = run_cmd(["python", "instagram_downloader.py", args.url], timeout=600)
+            if code != 0:
+                print("Downloader failed:", err)
+            time.sleep(1)
+            existing_workspaces = find_workspaces()
+            post_ids = {p.name for p in existing_workspaces}
+            new_ids = sorted(post_ids - pre_existing_ids)
+            if new_ids:
+                if workspace_to_emit is None:
+                    workspace_to_emit = new_ids[-1]
+                ws_map = {ws.name: ws for ws in existing_workspaces}
+                for nid in new_ids:
+                    if nid in ws_map:
+                        targets_map[ws_map[nid]] = False
+            else:
                 print("Downloader did not produce a new workspace for the requested URL.")
                 failure = True
 
-    if targets:
-        seen = set()
-        unique_targets = []
-        for ws in targets:
-            if ws.name in seen:
-                continue
-            seen.add(ws.name)
-            unique_targets.append(ws)
-        for ws in unique_targets:
-            print("Processing", ws.name)
-            res = process_single_workspace(ws, auto=args.auto, template_id=args.template_id)
+    if targets_map:
+        for ws in sorted(targets_map.keys(), key=lambda p: p.name):
+            reuse_flag = targets_map[ws]
+            label = " (cached)" if reuse_flag else ""
+            print(f"Processing {ws.name}{label}")
+            res = process_single_workspace(ws, auto=args.auto, template_id=args.template_id, reuse_existing=reuse_flag)
             summaries.append(res)
             if workspace_to_emit is None:
                 workspace_to_emit = ws.name

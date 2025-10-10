@@ -35,6 +35,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -162,22 +163,86 @@ class TemplateaAPI:
         return f"{self.base_url}/api/v1/workspaces/{workspace_id}/files/{file_key}"
     
     async def download_file(self, url: str) -> Optional[bytes]:
-        """Download a file from the API."""
-        try:
-            # Handle both full URLs and relative paths
-            if not url.startswith("http"):
-                url = f"{self.base_url}{url}"
-            
-            resp = await self.client.get(url, headers=self._headers())
-            resp.raise_for_status()
-            return resp.content
-        except Exception as e:
-            logger.error(f"Failed to download file from {url}: {e}")
-            return None
+        """Download a file from the API with retries and diagnostics."""
+        attempts = 20
+        delay_seconds = 2
+        last_error: Optional[str] = None
+
+        for attempt in range(1, attempts + 1):
+            full_url = url if url.startswith("http") else f"{self.base_url}{url}"
+            try:
+                resp = await self.client.get(full_url, headers=self._headers())
+                if resp.status_code == 200:
+                    return resp.content
+
+                snippet = resp.text[:200] if resp.text else ""
+                last_error = (
+                    f"HTTP {resp.status_code} while downloading {full_url} "
+                    f"(attempt {attempt}/{attempts}); payload snippet: {snippet!r}"
+                )
+                logger.warning(last_error)
+            except Exception as exc:
+                last_error = f"Exception downloading {full_url} (attempt {attempt}/{attempts}): {exc}"
+                logger.warning(last_error)
+
+            if attempt < attempts:
+                logger.info(
+                    f"Retrying download for {full_url} after {delay_seconds}s "
+                    f"(attempt {attempt + 1}/{attempts})"
+                )
+                await asyncio.sleep(delay_seconds)
+
+        if last_error:
+            logger.error(last_error)
+        return None
     
     async def close(self):
         """Close the HTTP client."""
         await self.client.aclose()
+
+
+async def send_with_retry(description: str, coro_factory):
+    """Retry Telegram API calls that may time out."""
+    attempts = 3
+    delay_seconds = 2
+    for attempt in range(1, attempts + 1):
+        try:
+            return await coro_factory()
+        except (TimedOut, NetworkError) as exc:
+            logger.warning(
+                "%s failed (attempt %s/%s): %s",
+                description,
+                attempt,
+                attempts,
+                exc,
+            )
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(delay_seconds)
+
+
+async def reply_text_with_retry(message, *args, **kwargs):
+    return await send_with_retry(
+        "reply_text", lambda: message.reply_text(*args, **kwargs)
+    )
+
+
+async def reply_video_with_retry(message, *args, **kwargs):
+    return await send_with_retry(
+        "reply_video", lambda: message.reply_video(*args, **kwargs)
+    )
+
+
+async def edit_text_with_retry(message, *args, **kwargs):
+    return await send_with_retry(
+        "edit_text", lambda: message.edit_text(*args, **kwargs)
+    )
+
+
+async def edit_message_text_with_retry(query, *args, **kwargs):
+    return await send_with_retry(
+        "edit_message_text", lambda: query.edit_message_text(*args, **kwargs)
+    )
 
 
 # Global API client
@@ -187,7 +252,8 @@ api = TemplateaAPI(API_BASE_URL, API_KEY)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Start the conversation."""
     user = update.effective_user
-    await update.message.reply_text(
+    await reply_text_with_retry(
+        update.message,
         f"👋 Hi {user.first_name}! Welcome to Templatea Bot.\n\n"
         "I'll help you create awesome marketing videos from Instagram reels.\n\n"
         "📱 Send me an Instagram reel URL to get started!\n\n"
@@ -198,7 +264,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancel the conversation."""
-    await update.message.reply_text(
+    await reply_text_with_retry(
+        update.message,
         "Operation cancelled. Send me a new Instagram URL whenever you're ready!",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -212,7 +279,8 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     # Basic URL validation
     if not ("instagram.com" in url or "instagr.am" in url):
-        await update.message.reply_text(
+        await reply_text_with_retry(
+            update.message,
             "❌ That doesn't look like an Instagram URL. Please send a valid Instagram reel link."
         )
         return STATE_WAITING_URL
@@ -220,13 +288,14 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     context.user_data["url"] = url
     
     # Show loading message
-    loading_msg = await update.message.reply_text("🔍 Loading templates...")
+    loading_msg = await reply_text_with_retry(update.message, "🔍 Loading templates...")
     
     # Fetch templates
     templates = await api.list_templates()
     
     if not templates:
-        await loading_msg.edit_text(
+        await edit_text_with_retry(
+            loading_msg,
             "❌ No templates available. Please contact the administrator."
         )
         return ConversationHandler.END
@@ -248,7 +317,8 @@ async def receive_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await loading_msg.edit_text(
+    await edit_text_with_retry(
+        loading_msg,
         "✅ URL received!\n\n"
         "📋 Please select a template:",
         reply_markup=reply_markup
@@ -272,7 +342,8 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         template_id
     )
     
-    await query.edit_message_text(
+    await edit_message_text_with_retry(
+        query,
         f"✅ Template selected: **{template_name}**\n\n"
         "⏳ Starting processing... This may take a few minutes.\n\n"
         "_Note: If you're reprocessing the same video, any cached renders will be cleared._"
@@ -283,7 +354,8 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     result = await api.create_reel(url, template_id, auto=False)
     
     if not result or not result.get("ok"):
-        await query.message.reply_text(
+        await reply_text_with_retry(
+            query.message,
             "❌ Failed to start processing. Please try again or contact support."
         )
         return ConversationHandler.END
@@ -292,7 +364,8 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     workspace_id = workspace.get("id")
     
     if not workspace_id:
-        await query.message.reply_text(
+        await reply_text_with_retry(
+            query.message,
             "❌ No workspace created. Please try again."
         )
         return ConversationHandler.END
@@ -300,7 +373,8 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["workspace_id"] = workspace_id
     
     # Start polling for status
-    await query.message.reply_text(
+    await reply_text_with_retry(
+        query.message,
         "⚙️ Processing your reel...\n"
         "📥 Downloading video\n"
         "🎬 Detecting content\n"
@@ -327,7 +401,7 @@ async def poll_for_ocr(message, workspace_id: str, context: ContextTypes.DEFAULT
         workspace = await api.get_workspace(workspace_id)
         
         if not workspace:
-            await message.reply_text("❌ Failed to check processing status.")
+            await reply_text_with_retry(message, "❌ Failed to check processing status.")
             return False
         
         status = workspace.get("status", {})
@@ -339,14 +413,15 @@ async def poll_for_ocr(message, workspace_id: str, context: ContextTypes.DEFAULT
             if ocr_status == "success" or ocr_status == "fallback_caption":
                 break
             elif ocr_status == "failed":
-                await message.reply_text("❌ OCR processing failed. Please try again.")
+                await reply_text_with_retry(message, "❌ OCR processing failed. Please try again.")
                 return False
         
         attempt += 1
         await asyncio.sleep(1)
     
     if attempt >= max_attempts:
-        await message.reply_text(
+        await reply_text_with_retry(
+            message,
             "⏱️ Processing is taking longer than expected. "
             "Please check back later or contact support."
         )
@@ -417,7 +492,8 @@ async def poll_for_ocr(message, workspace_id: str, context: ContextTypes.DEFAULT
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await message.reply_text(
+    await reply_text_with_retry(
+        message,
         "✅ Processing complete!\n\n"
         "📋 Please select the copy you want to use for your video:",
         reply_markup=reply_markup
@@ -435,7 +511,8 @@ async def copy_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     choice_type = choice_data[1]
     
     if choice_type == "manual":
-        await query.edit_message_text(
+        await edit_message_text_with_retry(
+            query,
             "✍️ Please type or paste your custom copy text:"
         )
         context.user_data["awaiting_manual"] = True
@@ -458,7 +535,8 @@ async def copy_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             selected_text = clean_text(selected_text)
     
     if not selected_text:
-        await query.edit_message_text(
+        await edit_message_text_with_retry(
+            query,
             "❌ Failed to get selected copy. Please try again."
         )
         return ConversationHandler.END
@@ -475,7 +553,8 @@ async def receive_manual_copy(update: Update, context: ContextTypes.DEFAULT_TYPE
     cleaned_text = clean_text(manual_text)
     
     if not cleaned_text:
-        await update.message.reply_text(
+        await reply_text_with_retry(
+            update.message,
             "❌ Empty text. Please send a valid copy text."
         )
         return STATE_SELECTING_COPY
@@ -490,7 +569,8 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     
     # Show preview
     preview = selected_text[:100] + "..." if len(selected_text) > 100 else selected_text
-    await message.reply_text(
+    await reply_text_with_retry(
+        message,
         f"✅ Copy selected:\n\n\"{preview}\"\n\n"
         "🎬 Rendering your video... This will take 1-2 minutes."
     )
@@ -499,28 +579,45 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     success = await api.submit_choice(workspace_id, choice_type, selected_text)
     
     if not success:
-        await message.reply_text(
+        await reply_text_with_retry(
+            message,
             "❌ Failed to submit choice. Please try again."
         )
         return ConversationHandler.END
     
     # Wait a moment for the backend to process the choice
     await asyncio.sleep(2)
+    submitted_at = datetime.utcnow()
+    selected_clean = clean_text(selected_text)
     
     # Poll for render completion
     max_attempts = 300  # 5 minutes
+    max_missing_status_attempts = 180  # ~2 minutes without any render status
     attempt = 0
     last_status = None
+    missing_status_count = 0
     
     while attempt < max_attempts:
         workspace = await api.get_workspace(workspace_id)
         
         if not workspace:
-            await message.reply_text("❌ Failed to check render status.")
+            await reply_text_with_retry(message, "❌ Failed to check render status.")
             return ConversationHandler.END
         
         status = workspace.get("status", {})
         render_status = status.get("04_render")
+        
+        if not render_status:
+            missing_status_count += 1
+            if missing_status_count >= max_missing_status_attempts:
+                await reply_text_with_retry(
+                    message,
+                    "⏱️ Rendering is taking longer than expected and no progress is reported yet.\n"
+                    "Please check back later or contact support."
+                )
+                return ConversationHandler.END
+        else:
+            missing_status_count = 0
         
         # Update user on status changes
         if render_status != last_status and render_status:
@@ -528,30 +625,25 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
             logger.info(f"Render status changed to: {render_status}")
         
         if render_status == "success":
-            # Verify the rendered text matches what we selected
+            # Log for debugging
             status_details = workspace.get("status_details", {})
-            render_details = status_details.get("04_render", {})
-            
-            # Check metadata to confirm this is a fresh render
             meta = workspace.get("meta", {})
             render_info = meta.get("render", {})
             rendered_text = render_info.get("text", "")
             render_timestamp = render_info.get("ts", "")
-            
-            # Log for debugging
             logger.info(f"Render complete - Selected: '{selected_text[:50]}' | Rendered: '{rendered_text[:50]}'")
             logger.info(f"Render timestamp: {render_timestamp}")
-            
             break
         elif render_status == "failed":
-            await message.reply_text("❌ Video rendering failed. Please try again.")
+            await reply_text_with_retry(message, "❌ Video rendering failed. Please try again.")
             return ConversationHandler.END
         
         attempt += 1
         await asyncio.sleep(1)
     
     if attempt >= max_attempts:
-        await message.reply_text(
+        await reply_text_with_retry(
+            message,
             "⏱️ Rendering is taking longer than expected. "
             "Please check back later."
         )
@@ -559,28 +651,65 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     
     # Get final video
     workspace = await api.get_workspace(workspace_id)
-    files = workspace.get("files", {})
-    final_url = files.get("final", {}).get("url")
-    
+    files = workspace.get("files", {}) if workspace else {}
+    final_entry = files.get("final") or {}
+    final_url = final_entry.get("url")
+
     if not final_url:
-        await message.reply_text(
+        # Allow a short window for the backend index to refresh after the render completes.
+        for _ in range(3):
+            await asyncio.sleep(1)
+            workspace = await api.get_workspace(workspace_id)
+            if not workspace:
+                continue
+            files = workspace.get("files", {})
+            final_entry = files.get("final") or {}
+            final_url = final_entry.get("url")
+            if final_url:
+                break
+
+    candidate_urls: List[str] = []
+    if final_url:
+        candidate_urls.append(final_url)
+
+    # Always include the canonical files/final endpoint as a fallback.
+    fallback_url = await api.get_file_url(workspace_id, "final")
+    if fallback_url and fallback_url not in candidate_urls:
+        candidate_urls.append(fallback_url)
+
+    # Normalize to absolute URLs and remove duplicates.
+    normalized_urls: List[str] = []
+    for url in candidate_urls:
+        if not url:
+            continue
+        absolute = url if url.startswith("http") else f"{API_BASE_URL}{url}"
+        if absolute not in normalized_urls:
+            normalized_urls.append(absolute)
+
+    if not normalized_urls:
+        await reply_text_with_retry(
+            message,
             "❌ Video file not found. Please contact support."
         )
         return ConversationHandler.END
     
-    # Ensure full URL
-    if not final_url.startswith("http"):
-        final_url = f"{API_BASE_URL}{final_url}"
+    await reply_text_with_retry(message, "📥 Downloading your video...")
     
-    await message.reply_text("📥 Downloading your video...")
+    # Download video using first URL that succeeds.
+    video_data = None
+    download_url = None
+    for url in normalized_urls:
+        video_data = await api.download_file(url)
+        if video_data:
+            download_url = url
+            break
     
-    # Download video
-    video_data = await api.download_file(final_url)
-    
-    if not video_data:
-        await message.reply_text(
+    if not video_data or not download_url:
+        fallback_msg = normalized_urls[-1]
+        await reply_text_with_retry(
+            message,
             f"❌ Failed to download video.\n\n"
-            f"You can try downloading it directly:\n{final_url}"
+            f"You can try downloading it directly:\n{fallback_msg}"
         )
         return ConversationHandler.END
     
@@ -588,14 +717,18 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     video_size_mb = len(video_data) / (1024 * 1024)
     
     if video_size_mb > 50:
-        await message.reply_text(
+        await reply_text_with_retry(
+            message,
             f"⚠️ Video is too large ({video_size_mb:.1f}MB) to send via Telegram.\n\n"
-            f"Download it here:\n{final_url}"
+            f"Download it here:\n{download_url}"
         )
         return ConversationHandler.END
     
     # Send video
-    await message.reply_text(f"📤 Sending your video ({video_size_mb:.1f}MB)...\n\n_This may take 1-2 minutes for large videos._")
+    await reply_text_with_retry(
+        message,
+        f"📤 Sending your video ({video_size_mb:.1f}MB)...\n\n_This may take 1-2 minutes for large videos._"
+    )
     
     try:
         from io import BytesIO
@@ -605,33 +738,37 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
         # Disable timeout protection - let it take as long as needed
         import telegram.error
         try:
-            sent_message = await message.reply_video(
+            sent_message = await reply_video_with_retry(
+                message,
                 video=video_file,
                 caption=f"✅ Your video is ready!\n\nCopy: {preview}",
                 supports_streaming=True,
-                write_timeout=None,  # No timeout
-                read_timeout=None,   # No timeout
+                write_timeout=None,
+                read_timeout=None,
                 connect_timeout=60.0
             )
             
             # Success - send completion message
-            await message.reply_text(
+            await reply_text_with_retry(
+                message,
                 "🎉 All done! Send me another Instagram URL to create more videos."
             )
         except telegram.error.TimedOut:
             # Video might still be uploading - inform user
-            await message.reply_text(
+            await reply_text_with_retry(
+                message,
                 "⚠️ Upload is taking longer than expected, but the video is likely still being sent.\n\n"
                 "If you don't receive it in 2 minutes, download here:\n"
-                f"{final_url}\n\n"
+                f"{download_url}\n\n"
                 "You can send another Instagram URL to create more videos."
             )
         
     except Exception as e:
         logger.error(f"Failed to send video: {e}")
-        await message.reply_text(
+        await reply_text_with_retry(
+            message,
             f"❌ Failed to send video (Error: {str(e)}).\n\n"
-            f"You can download it here:\n{final_url}"
+            f"You can download it here:\n{download_url}"
         )
         return ConversationHandler.END
         return ConversationHandler.END
@@ -645,7 +782,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Exception while handling an update:", exc_info=context.error)
     
     if isinstance(update, Update) and update.effective_message:
-        await update.effective_message.reply_text(
+        await reply_text_with_retry(
+            update.effective_message,
             "❌ An error occurred. Please try again or contact support."
         )
 

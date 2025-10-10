@@ -471,7 +471,7 @@ class TemplateEngine:
 
         # Draw text ON TOP of highlights
         y = text_top
-        line_spacing_factor = 1.12
+        line_spacing_factor = 1.5
         for i, ln in enumerate(lines):
             line_x = line_origins[i] if i < len(line_origins) else x_origin
             draw.text((line_x, y), ln, font=font, fill=txt_cfg.get("color", "#ffffff"))
@@ -482,7 +482,7 @@ class TemplateEngine:
             else:
                 y += int(h * line_spacing_factor)
 
-        # Logo with proper aspect ratio preservation
+        # Logo with proper aspect ratio usag
         logo_cfg = cfg.get("logo", {})
         if logo_cfg.get("enabled", True):
             logo_path = root / logo_cfg.get("path", "")
@@ -563,3 +563,25 @@ def render_with_template(input_video_path: str, output_video_path: str, text: st
     )
     engine = TemplateEngine(request)
     return engine.render()
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Run marketing spot template renderer")
+    parser.add_argument("--input-video", type=str, required=True, help="Path to input video")
+    parser.add_argument("--output-video", type=str, required=True, help="Path to save output video")
+    parser.add_argument("--text", type=str, required=True, help="Text content")
+    parser.add_argument("--template-root", type=str, required=True, help="Folder with template.json and assets")
+    parser.add_argument("--overrides", type=str, help="JSON string of any template overrides (optional)")
+    args = parser.parse_args()
+
+    overrides = None
+    if args.overrides:
+        overrides = json.loads(args.overrides)
+
+    render_with_template(
+        input_video_path=args.input_video,
+        output_video_path=args.output_video,
+        text=args.text,
+        template_root=args.template_root,
+        overrides=overrides
+    )

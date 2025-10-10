@@ -41,6 +41,13 @@ except ImportError as exc:
 
 import requests
 
+
+def _normalize_dashes(text: str) -> str:
+    """Replace em/en dashes with a comma-space combo for downstream compatibility."""
+    if not text:
+        return text
+    return text.replace("\u2014", ", ").replace("\u2013", ", ")
+
 DEFAULT_PROMPT = (
     "Look at the image and extract only the main body text or commentary of the post "
     "that relates to the advertisement. Do not include the social media account name, "
@@ -97,6 +104,8 @@ Rules – follow them exactly:
 7. Never output any extra keys except `error`, `original`, `extracted`, or `unparsed` when following rule 5–6.
 8. ALWAYS ensure the output is valid JSON (no trailing commas, proper quoting, proper true/false/null).
 9. Output must be the **raw JSON text only** – nothing else, not even a single extra space or newline outside the JSON.
+10.Under no circumstances should you use em dashes (—) or en dashes (–) in your output.
+11.Review and revise your response to ensure em dashes never appear in the final output for any reason.
 
 Now parse and respond with the single, valid JSON value for the following input string (do not repeat the input, do not add commentary):
 
@@ -577,7 +586,7 @@ def main() -> None:
             result = process_video(video, api_key, args.frame_fraction, args.prompt, args.model)
             print(f"[OK] Extracted text:\n{result['text']}\n")
 
-            ocr_caption = result["text"].strip()
+            ocr_caption = _normalize_dashes(result["text"].strip())
             caption_text = ocr_caption
             caption_source = "ocr"
             manual_caption_file: Path | None = None
@@ -592,7 +601,7 @@ def main() -> None:
                 try:
                     if candidate.exists() and candidate.is_file():
                         manual_caption_file = candidate
-                        manual_caption_text = candidate.read_text(encoding="utf-8").strip()
+                        manual_caption_text = _normalize_dashes(candidate.read_text(encoding="utf-8").strip())
                         break
                 except OSError as os_err:
                     print(f"[WARN] Unable to read manual caption file {candidate}: {os_err}")
@@ -605,6 +614,7 @@ def main() -> None:
                 else:
                     print(f"[WARN] Manual caption file {manual_caption_file} is empty. Falling back to OCR text.")
 
+            caption_text = _normalize_dashes(caption_text)
             result["caption_source"] = caption_source
             result["manual_caption_file"] = str(manual_caption_file) if manual_caption_file else None
             result["manual_caption"] = manual_caption_text if manual_caption_text else None
@@ -629,13 +639,16 @@ def main() -> None:
                             perplexity_model=args.perplexity_model,
                             groq_model=args.groq_model,
                         )
+                        sanitized_copies = [
+                            _normalize_dashes(line) for line in ai_result["one_liners"]
+                        ]
                         result["ai_copy_status"] = "success"
-                        result["ai_recommended_copies"] = ai_result["one_liners"]
+                        result["ai_recommended_copies"] = sanitized_copies
                         result["ai_copy_source"] = ai_result["source"]
                         result["ai_validation_notes"] = ai_result["validation_notes"]
                         
                         print(f"[OK] AI recommended copies (source: {ai_result['source']}):")
-                        for idx, line in enumerate(ai_result["one_liners"], start=1):
+                        for idx, line in enumerate(sanitized_copies, start=1):
                             print(f"  {idx}. {line}")
                         if ai_result["validation_notes"]:
                             print(f"[INFO] Validation notes:")
