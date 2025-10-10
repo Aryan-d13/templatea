@@ -1,2 +1,0 @@
-"""Templatea backend API package."""
-
