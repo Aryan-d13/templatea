@@ -10,17 +10,9 @@ frontend/
 venv/
 .venv/
 env/
-
-# Python cache
-__pycache__/
-*.py[cod]
-*.pyo
-
 # Testing
 .pytest_cache/
 
-# Environment variables
-.env
 
 # Distribution / packaging
 *.egg-info/
