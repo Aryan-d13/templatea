@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Iterable, List
 
 from builtins import print as _builtin_print
+import unicodedata
 
 
 def _safe_print(*args, **kwargs):
@@ -42,11 +43,17 @@ except ImportError as exc:
 import requests
 
 
-def _normalize_dashes(text: str) -> str:
-    """Replace em/en dashes with a comma-space combo for downstream compatibility."""
+def _clean_text(text: str) -> str:
+    """Normalize captions by replacing dodgy punctuation and stripping zero-width chars."""
     if not text:
-        return text
-    return text.replace("\u2014", ", ").replace("\u2013", ", ")
+        return ""
+    normalized = text.replace("\u2014", ", ").replace("\u2013", ", ").replace("\u2212", "-")
+    cleaned_chars = []
+    for char in normalized:
+        if unicodedata.category(char) == "Cf":
+            continue
+        cleaned_chars.append(char)
+    return "".join(cleaned_chars)
 
 DEFAULT_PROMPT = (
     "Look at the image and extract only the main body text or commentary of the post "
@@ -586,7 +593,7 @@ def main() -> None:
             result = process_video(video, api_key, args.frame_fraction, args.prompt, args.model)
             print(f"[OK] Extracted text:\n{result['text']}\n")
 
-            ocr_caption = _normalize_dashes(result["text"].strip())
+            ocr_caption = _clean_text(result["text"].strip())
             caption_text = ocr_caption
             caption_source = "ocr"
             manual_caption_file: Path | None = None
@@ -601,7 +608,7 @@ def main() -> None:
                 try:
                     if candidate.exists() and candidate.is_file():
                         manual_caption_file = candidate
-                        manual_caption_text = _normalize_dashes(candidate.read_text(encoding="utf-8").strip())
+                        manual_caption_text = _clean_text(candidate.read_text(encoding="utf-8").strip())
                         break
                 except OSError as os_err:
                     print(f"[WARN] Unable to read manual caption file {candidate}: {os_err}")
@@ -614,7 +621,7 @@ def main() -> None:
                 else:
                     print(f"[WARN] Manual caption file {manual_caption_file} is empty. Falling back to OCR text.")
 
-            caption_text = _normalize_dashes(caption_text)
+            caption_text = _clean_text(caption_text)
             result["caption_source"] = caption_source
             result["manual_caption_file"] = str(manual_caption_file) if manual_caption_file else None
             result["manual_caption"] = manual_caption_text if manual_caption_text else None
@@ -640,7 +647,7 @@ def main() -> None:
                             groq_model=args.groq_model,
                         )
                         sanitized_copies = [
-                            _normalize_dashes(line) for line in ai_result["one_liners"]
+                            _clean_text(line) for line in ai_result["one_liners"]
                         ]
                         result["ai_copy_status"] = "success"
                         result["ai_recommended_copies"] = sanitized_copies

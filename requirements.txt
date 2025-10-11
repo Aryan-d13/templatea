@@ -9,3 +9,4 @@ uvicorn[standard]
 httpx
 pytest
 yt-dlp
+instaloader

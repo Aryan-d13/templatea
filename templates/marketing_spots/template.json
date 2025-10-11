@@ -52,5 +52,7 @@
     "render": {
       "audio_merge": true,
       "ffmpeg_params": "-c:v libx264 -crf 18 -preset veryfast"
-    }
+    },
+    "text.casing_mode": "sentence",
+    "text.line_spacing_factor": 0.75
   }

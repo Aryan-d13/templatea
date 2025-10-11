@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import json
+import string
 import tempfile
 import subprocess
 import shlex
@@ -33,38 +34,63 @@ def load_template_cfg(template_root: Path):
         raise FileNotFoundError(f"Missing template.json at {cfg_path}")
     return json.loads(cfg_path.read_text(encoding="utf-8"))
 
-def measure_wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: ImageDraw.Draw):
-    """Wrap text to fit within max_width. Returns (lines, total_height)"""
+def get_line_height(font: ImageFont.FreeTypeFont) -> int:
+    """
+    Return a font-specific line height that stays consistent regardless of the glyphs in the actual text.
+    """
+    try:
+        ascent, descent = font.getmetrics()
+        line_height = ascent + descent
+        if line_height > 0:
+            return line_height
+    except Exception:
+        pass
+
+    try:
+        bbox = font.getbbox("Ag")
+        if bbox:
+            return max(1, bbox[3] - bbox[1])
+    except Exception:
+        pass
+
+    return max(1, getattr(font, "size", 12))
+
+
+def measure_wrapped_lines(
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    draw: ImageDraw.Draw,
+    line_spacing_factor: float = 1.2,
+    line_height: Optional[int] = None,
+):
+    """Wrap text to fit within max_width. Returns (lines, total_height)."""
     words = text.split()
-    lines = []
+    lines: List[str] = []
     cur = ""
+
     for w in words:
         test = (cur + " " + w).strip()
-        bbox = draw.textbbox((0,0), test, font=font)
+        bbox = draw.textbbox((0, 0), test, font=font)
         if bbox[2] <= max_width:
             cur = test
         else:
             if cur:
                 lines.append(cur)
             cur = w
+
     if cur:
         lines.append(cur)
-    
-    # Compute total height with proper line spacing
+
     if not lines:
         return [], 0
-    
-    line_spacing_factor = 1.12
-    total_height = 0
-    for i, ln in enumerate(lines):
-        bbox = draw.textbbox((0,0), ln, font=font)
-        line_h = bbox[3] - bbox[1]
-        if i == 0:
-            total_height += line_h
-        else:
-            total_height += int(line_h * line_spacing_factor)
-    
+
+    line_height = line_height or get_line_height(font)
+    line_step = max(1, int(line_height * line_spacing_factor))
+    total_height = line_height + (len(lines) - 1) * line_step
+
     return lines, total_height
+
 
 def choose_font(draw, font_path: Path, requested_size: int, min_size: int, max_lines: int, max_width: int, text: str):
     """Binary search for largest font that fits text within max_lines"""
@@ -91,6 +117,34 @@ def choose_font(draw, font_path: Path, requested_size: int, min_size: int, max_l
         return ImageFont.truetype(str(font_path), best_size)
     except Exception:
         return ImageFont.load_default()
+
+def apply_text_casing(text: str, mode: Optional[str]) -> str:
+    """Normalize text casing according to the requested mode."""
+    if not text:
+        return text
+
+    normalized = (mode or "original").lower()
+
+    if normalized in {"upper", "uppercase", "all_caps", "caps"}:
+        return text.upper()
+    if normalized in {"lower", "lowercase", "all_lower"}:
+        return text.lower()
+    if normalized in {"title", "titlecase", "title_case"}:
+        return string.capwords(text)
+    if normalized in {"sentence", "sentencecase", "sentence_case", "capitalize"}:
+        idx = None
+        for i, ch in enumerate(text):
+            if ch.isalpha():
+                idx = i
+                break
+        if idx is None:
+            return text
+        prefix = text[:idx]
+        first = text[idx].upper()
+        rest = text[idx + 1:].lower()
+        return f"{prefix}{first}{rest}"
+
+    return text
 
 def draw_highlight_rect(draw: ImageDraw.Draw, rect: Tuple[int,int,int,int], radius: int, fill):
     """Safe rounded rectangle drawing"""
@@ -181,16 +235,26 @@ def draw_highlights(
     highlight_phrases: List[List[str]],
     highlight_color: str,
     line_origins: Optional[List[int]] = None,
-    pad_px: int = 7  # <--- modular padding here
+    pad_px: int = 7,
+    line_positions: Optional[List[int]] = None,
+    line_height: Optional[int] = None,
+    line_step: Optional[int] = None,
 ):
-    """
-    Draw highlight rectangles behind words/phrases—now with modular fixed padding.
-    """
+    """Draw highlight rectangles behind chosen words/phrases."""
     if not highlight_phrases:
         return
 
     radius = max(4, int(font.size * 0.2))
-    line_spacing = int(font.size * 0.12)  # font spacing
+    line_height = line_height or get_line_height(font)
+    line_step = line_step or max(1, line_height)
+
+    if line_positions is None:
+        line_positions = []
+        current_y = y_origin
+        for idx in range(len(lines)):
+            line_positions.append(current_y)
+            if idx < len(lines) - 1:
+                current_y += line_step
 
     highlight_positions = set()
     for phrase in highlight_phrases:
@@ -199,8 +263,8 @@ def draw_highlights(
             for word_idx in range(start_word, end_word + 1):
                 highlight_positions.add((line_idx, word_idx))
 
-    y = y_origin
     for line_idx, line in enumerate(lines):
+        line_top = line_positions[line_idx] if line_idx < len(line_positions) else y_origin
         words = line.split()
         cursor_x = (
             line_origins[line_idx]
@@ -209,7 +273,7 @@ def draw_highlights(
         )
 
         for word_idx, word in enumerate(words):
-            bbox = draw.textbbox((cursor_x, y), word, font=font, anchor="la")
+            bbox = draw.textbbox((cursor_x, line_top), word, font=font)
             highlight_rect = (
                 bbox[0] - pad_px,
                 bbox[1] - pad_px,
@@ -223,10 +287,8 @@ def draw_highlights(
                     draw.rectangle(highlight_rect, fill=highlight_color)
 
             word_width = font.getlength(word)
-            space_width = font.getlength(" ") if word_idx < len(words) - 1 else 0
+            space_width = font.getlength(' ') if word_idx < len(words) - 1 else 0
             cursor_x += word_width + space_width
-
-        y += font.getbbox(line)[3] - font.getbbox(line)[1] + line_spacing
 
 
 def select_highlight_words_via_ai(text: str, top_k: int = 3) -> List[str]:
@@ -404,14 +466,34 @@ class TemplateEngine:
         max_lines = int(txt_cfg.get("max_lines", 2))
         line_width_pct = float(txt_cfg.get("line_width_pct", 90))
         max_width = int(canvas_w * (line_width_pct / 100.0))
+        casing_mode = txt_cfg.get("casing_mode")
+        if casing_mode is None:
+            casing_mode = cfg.get("text.casing_mode")
+        render_text = apply_text_casing(self.request.text, casing_mode)
+        line_spacing_factor_cfg = txt_cfg.get("line_spacing_factor")
+        if line_spacing_factor_cfg is None:
+            line_spacing_factor_cfg = cfg.get("text.line_spacing_factor")
+        try:
+            line_spacing_factor = float(line_spacing_factor_cfg) if line_spacing_factor_cfg is not None else 1.35
+        except (TypeError, ValueError):
+            line_spacing_factor = 1.35
 
         # Choose font that fits within max_lines
         if font_path and font_path.exists():
-            font = choose_font(draw, font_path, requested_size, min_size, max_lines, max_width, self.request.text)
+            font = choose_font(draw, font_path, requested_size, min_size, max_lines, max_width, render_text)
         else:
             font = ImageFont.load_default()
 
-        lines, text_h = measure_wrapped_lines(self.request.text, font, max_width, draw)
+        line_height = get_line_height(font)
+        line_step = max(1, int(line_height * line_spacing_factor))
+        lines, text_h = measure_wrapped_lines(
+            render_text,
+            font,
+            max_width,
+            draw,
+            line_spacing_factor=line_spacing_factor,
+            line_height=line_height,
+        )
 
         # CRITICAL FIX: Position text so BOTTOM is gap_px above video top
         gap_px = int(txt_cfg.get("position_relative_to_video", {}).get("gap_px", 20))
@@ -441,6 +523,13 @@ class TemplateEngine:
                 origin = margin
             line_origins.append(origin)
 
+        line_positions: List[int] = []
+        current_line_top = text_top
+        for idx in range(len(lines)):
+            line_positions.append(current_line_top)
+            if idx < len(lines) - 1:
+                current_line_top += line_step
+
         # Highlight configuration
         hl_cfg = txt_cfg.get("highlight", {})
         highlight_phrases = []
@@ -453,7 +542,7 @@ class TemplateEngine:
             else:
                 # AI mode: use top_k from config (default 3)
                 top_k = int(hl_cfg.get("highlight_count", 3))
-                ai_words = select_highlight_words_via_ai(self.request.text, top_k=top_k)
+                ai_words = select_highlight_words_via_ai(render_text, top_k=top_k)
                 highlight_phrases = [[w] for w in ai_words]  # Convert to phrase format
 
         # Draw highlights FIRST (behind text)
@@ -467,20 +556,16 @@ class TemplateEngine:
                 highlight_phrases,
                 hl_cfg.get("default_highlight_color", "#ffde59"),
                 line_origins=line_origins,
+                line_positions=line_positions,
+                line_height=line_height,
+                line_step=line_step,
             )
 
         # Draw text ON TOP of highlights
-        y = text_top
-        line_spacing_factor = 1.5
-        for i, ln in enumerate(lines):
-            line_x = line_origins[i] if i < len(line_origins) else x_origin
-            draw.text((line_x, y), ln, font=font, fill=txt_cfg.get("color", "#ffffff"))
-            bbox = draw.textbbox((0, 0), ln, font=font)
-            h = bbox[3] - bbox[1]
-            if i == 0:
-                y += h
-            else:
-                y += int(h * line_spacing_factor)
+        text_color = txt_cfg.get("color", "#ffffff")
+        for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+            line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+            draw.text((line_x, line_top), ln, font=font, fill=text_color)
 
         # Logo with proper aspect ratio usag
         logo_cfg = cfg.get("logo", {})

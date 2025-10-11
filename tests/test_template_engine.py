@@ -1,92 +1,363 @@
-import unittest
-from unittest.mock import patch, MagicMock, mock_open
-from pathlib import Path
 import json
+from pathlib import Path
 
-# Add the project root to the Python path
-import sys
-import os
-sys.path.insert(0, 'e:\\Code\\Templatea')
+import pytest
+from PIL import Image, ImageDraw, ImageFont
 
-from ..template_engine import (
-    probe_video_size,
-    load_template_cfg,
-    measure_wrapped_lines,
-    choose_font,
-    TemplateRenderRequest,
-    TemplateEngine
-)
+import template_engine as engine
 
-class TestTemplateEngine(unittest.TestCase):
 
-    @patch('subprocess.check_output')
-    def test_probe_video_size(self, mock_check_output):
-        mock_check_output.return_value = b'1920,1080\n'
-        width, height = probe_video_size('/fake/video.mp4')
-        self.assertEqual(width, 1920)
-        self.assertEqual(height, 1080)
-        mock_check_output.assert_called_once()
+def test_load_template_cfg_reads_json(tmp_path):
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
+    expected = {"canvas": {"width": 800, "height": 600}}
+    (template_dir / "template.json").write_text(json.dumps(expected), encoding="utf-8")
 
-    def test_load_template_cfg(self):
-        template_content = '{"canvas": {"width": 1080, "height": 1920}}'
-        with patch('builtins.open', mock_open(read_data=template_content)) as mock_file:
-            cfg = load_template_cfg(Path('/fake/template'))
-            self.assertEqual(cfg['canvas']['width'], 1080)
-            mock_file.assert_called_with(Path('/fake/template/template.json'), 'r', encoding='utf-8')
+    cfg = engine.load_template_cfg(template_dir)
 
-    def test_measure_wrapped_lines(self):
-        mock_font = MagicMock()
-        mock_draw = MagicMock()
-        mock_draw.textbbox.side_effect = [
-            (0, 0, 100, 20),  # "Hello"
-            (0, 0, 220, 20),  # "Hello World"
-            (0, 0, 110, 20),  # "World"
-            (0, 0, 100, 20),  # "Hello"
-            (0, 0, 110, 20)   # "World"
-        ]
+    assert cfg == expected
 
-        lines, height = measure_wrapped_lines('Hello World', mock_font, 200, mock_draw)
-        self.assertEqual(lines, ['Hello', 'World'])
-        self.assertGreater(height, 0)
 
-    @patch('PIL.ImageFont.truetype')
-    def test_choose_font(self, mock_truetype):
-        mock_font = MagicMock()
-        mock_truetype.return_value = mock_font
-        mock_draw = MagicMock()
-        mock_draw.textbbox.return_value = (0, 0, 100, 20)
+def test_load_template_cfg_missing_file(tmp_path):
+    template_dir = tmp_path / "template"
+    template_dir.mkdir()
 
-        font = choose_font(mock_draw, Path('/fake/font.ttf'), 120, 40, 2, 200, 'Hello World')
-        self.assertIsNotNone(font)
-        mock_truetype.assert_called()
+    with pytest.raises(FileNotFoundError):
+        engine.load_template_cfg(template_dir)
 
-    @patch('template_engine.composite_canvas_and_video')
-    @patch('PIL.Image.new')
-    @patch('template_engine.load_template_cfg')
-    @patch('template_engine.probe_video_size')
-    def test_template_engine_render(self, mock_probe_video_size, mock_load_template_cfg, mock_image_new, mock_composite):
-        mock_probe_video_size.return_value = (1080, 1920)
-        mock_load_template_cfg.return_value = {
-            'canvas': {'width': 1080, 'height': 1920},
-            'text': {'font_size': 120, 'max_lines': 2, 'line_width_pct': 90}
-        }
-        mock_image = MagicMock()
-        mock_image_new.return_value = mock_image
 
-        request = TemplateRenderRequest(
-            input_video_path='/fake/video.mp4',
-            output_video_path='/fake/output.mp4',
-            text='Hello World',
-            template_root='/fake/template'
-        )
-        engine = TemplateEngine(request)
-        result = engine.render()
+def test_probe_video_size_success(monkeypatch):
+    called = {}
 
-        self.assertTrue(result)
-        mock_load_template_cfg.assert_called_once()
-        mock_probe_video_size.assert_called_once()
-        mock_image_new.assert_called_once()
-        mock_composite.assert_called_once()
+    def fake_check_output(cmd, stderr=None):
+        called["cmd"] = cmd
+        return b"640,480\n"
 
-if __name__ == '__main__':
-    unittest.main()
+    monkeypatch.setattr(engine.subprocess, "check_output", fake_check_output)
+
+    width, height = engine.probe_video_size("video.mp4")
+
+    assert (width, height) == (640, 480)
+    assert called["cmd"][0] == "ffprobe"
+
+
+def test_probe_video_size_returns_default_on_error(monkeypatch):
+    def fake_check_output(cmd, stderr=None):
+        raise engine.subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(engine.subprocess, "check_output", fake_check_output)
+
+    assert engine.probe_video_size("missing.mp4") == (1080, 1920)
+
+
+def test_probe_duration_success(monkeypatch):
+    monkeypatch.setattr(engine.subprocess, "check_output", lambda *_, **__: b"3.5\n")
+
+    assert engine.probe_duration("video.mp4") == pytest.approx(3.5)
+
+
+def test_probe_duration_handles_error(monkeypatch):
+    monkeypatch.setattr(engine.subprocess, "check_output", lambda *_, **__: (_ for _ in ()).throw(Exception("ffprobe failed")))
+
+    assert engine.probe_duration("broken.mp4") is None
+
+
+def test_measure_wrapped_lines_wraps_and_counts_height():
+    image = Image.new("RGB", (200, 200), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    text = "This is a moderately long sentence that should wrap more than once."
+    lines, total_height = engine.measure_wrapped_lines(text, font, max_width=70, draw=draw)
+
+    assert len(lines) >= 2
+    assert total_height > 0
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        assert bbox[2] <= 75  # small cushion for rounding
+
+
+def test_choose_font_falls_back_to_default(monkeypatch):
+    call_count = {"value": 0}
+
+    original_truetype = engine.ImageFont.truetype
+
+    def fake_truetype(path, size, *args, **kwargs):
+        if "layout_engine" in kwargs:
+            return original_truetype(path, size, *args, **kwargs)
+        call_count["value"] += 1
+        raise OSError("missing font")
+
+    monkeypatch.setattr(engine.ImageFont, "truetype", fake_truetype)
+
+    image = Image.new("RGB", (200, 200))
+    draw = ImageDraw.Draw(image)
+
+    font = engine.choose_font(
+        draw,
+        Path("missing.ttf"),
+        requested_size=42,
+        min_size=12,
+        max_lines=2,
+        max_width=120,
+        text="Fallback font selection test",
+    )
+
+    assert isinstance(font, ImageFont.FreeTypeFont)
+    assert call_count["value"] >= 1
+
+
+def test_apply_text_casing_modes():
+    assert engine.apply_text_casing("hello world", "upper") == "HELLO WORLD"
+    assert engine.apply_text_casing("HELLO WORLD", "lowercase") == "hello world"
+    assert engine.apply_text_casing("hELLo world", "sentence") == "Hello world"
+    assert engine.apply_text_casing("hello world", "title") == "Hello World"
+    assert engine.apply_text_casing("Keep Original", None) == "Keep Original"
+
+
+def test_parse_highlight_words_supports_phrases():
+    manual = ["Samsung", "AI powered home helper", 123]
+
+    result = engine.parse_highlight_words(manual)
+
+    assert result == [["Samsung"], ["AI", "powered", "home", "helper"], ["123"]]
+
+
+def test_find_phrase_positions_handles_multi_line_phrase():
+    lines = ["AI powered", "home helper robot"]
+    phrase = ["powered", "home", "helper"]
+
+    positions = engine.find_phrase_positions(lines, phrase)
+
+    assert positions == [(0, 1, 1), (1, 0, 0), (1, 1, 1)]
+
+
+def test_select_highlight_words_via_ai_prefers_longer_tokens():
+    text = "AI powered highlight demonstration context"
+
+    selected = engine.select_highlight_words_via_ai(text, top_k=2)
+
+    assert selected == ["demonstration", "highlight"]
+
+
+def test_template_engine_render_renders_canvas(tmp_path, monkeypatch):
+    template_root = tmp_path / "template"
+    template_root.mkdir()
+    config = {
+        "canvas": {"width": 400, "height": 400},
+        "background": {"type": "color", "value": "#000000"},
+        "video": {"width_pct": 50, "vertical_align": "center"},
+        "text": {
+            "font": "",
+            "font_size": 48,
+            "min_font_size": 24,
+            "max_lines": 3,
+            "line_width_pct": 80,
+            "align": "center",
+            "position_relative_to_video": {"gap_px": 20},
+            "color": "#ffffff",
+            "highlight": {"enabled": True, "mode": "manual", "manual_words": ["Hello"]},
+        },
+        "logo": {"enabled": False},
+    }
+    (template_root / "template.json").write_text(json.dumps(config), encoding="utf-8")
+
+    input_video_path = tmp_path / "input.mp4"
+    input_video_path.write_bytes(b"fake")
+    output_video_path = tmp_path / "output.mp4"
+
+    def fake_probe_video_size(path):
+        assert path == str(input_video_path)
+        return 1280, 720
+
+    captured = {}
+
+    def fake_composite(canvas_path, in_path, out_path, cfg):
+        assert Path(canvas_path).exists()
+        assert in_path == str(input_video_path)
+        assert out_path == str(output_video_path)
+        captured["canvas_path"] = Path(canvas_path)
+        captured["cfg"] = cfg
+        Path(out_path).write_text("rendered")
+
+    monkeypatch.setattr(engine, "probe_video_size", fake_probe_video_size)
+    monkeypatch.setattr(engine, "composite_canvas_and_video", fake_composite)
+
+    request = engine.TemplateRenderRequest(
+        input_video_path=str(input_video_path),
+        output_video_path=str(output_video_path),
+        text="Hello world from template engine",
+        template_root=str(template_root),
+    )
+    result = engine.TemplateEngine(request).render()
+
+    assert result is True
+    assert "canvas_path" in captured
+    assert not captured["canvas_path"].exists()
+    assert output_video_path.read_text() == "rendered"
+    assert captured["cfg"]["canvas"]["width"] == 400
+
+
+def test_template_engine_applies_casing_before_layout(tmp_path, monkeypatch):
+    template_root = tmp_path / "template"
+    template_root.mkdir()
+    config = {
+        "canvas": {"width": 300, "height": 300},
+        "background": {"type": "color", "value": "#000000"},
+        "video": {"width_pct": 50, "vertical_align": "center"},
+        "text": {
+            "font": "",
+            "font_size": 32,
+            "min_font_size": 16,
+            "max_lines": 2,
+            "line_width_pct": 80,
+            "align": "center",
+            "position_relative_to_video": {"gap_px": 20},
+            "color": "#ffffff",
+            "highlight": {"enabled": False},
+            "casing_mode": "upper",
+        },
+        "logo": {"enabled": False},
+    }
+    (template_root / "template.json").write_text(json.dumps(config), encoding="utf-8")
+
+    input_video_path = tmp_path / "input.mp4"
+    input_video_path.write_bytes(b"fake")
+    output_video_path = tmp_path / "output.mp4"
+
+    monkeypatch.setattr(engine, "probe_video_size", lambda _: (640, 360))
+
+    measured = {}
+
+    def fake_measure(text, font, max_width, draw, **kwargs):
+        measured["text"] = text
+        return [text], 40
+
+    monkeypatch.setattr(engine, "measure_wrapped_lines", fake_measure)
+
+    def fake_composite(canvas_path, *_args, **_kwargs):
+        Path(canvas_path).unlink(missing_ok=True)
+        output_video_path.write_text("rendered")
+        return True
+
+    monkeypatch.setattr(engine, "composite_canvas_and_video", fake_composite)
+
+    request = engine.TemplateRenderRequest(
+        input_video_path=str(input_video_path),
+        output_video_path=str(output_video_path),
+        text="make me loud",
+        template_root=str(template_root),
+    )
+
+    assert engine.TemplateEngine(request).render() is True
+    assert measured["text"] == "MAKE ME LOUD"
+    assert output_video_path.read_text() == "rendered"
+
+
+def test_template_engine_supports_root_level_casing_key(tmp_path, monkeypatch):
+    template_root = tmp_path / "template"
+    template_root.mkdir()
+    config = {
+        "canvas": {"width": 300, "height": 300},
+        "background": {"type": "color", "value": "#000000"},
+        "video": {"width_pct": 50, "vertical_align": "center"},
+        "text": {
+            "font": "",
+            "font_size": 32,
+            "min_font_size": 16,
+            "max_lines": 2,
+            "line_width_pct": 80,
+            "align": "center",
+            "position_relative_to_video": {"gap_px": 20},
+            "color": "#ffffff",
+            "highlight": {"enabled": False},
+        },
+        "text.casing_mode": "upper",
+        "logo": {"enabled": False},
+    }
+    (template_root / "template.json").write_text(json.dumps(config), encoding="utf-8")
+
+    input_video_path = tmp_path / "input.mp4"
+    input_video_path.write_bytes(b"fake")
+    output_video_path = tmp_path / "output.mp4"
+
+    monkeypatch.setattr(engine, "probe_video_size", lambda _: (640, 360))
+
+    measured = {}
+
+    def fake_measure(text, font, max_width, draw, **kwargs):
+        measured["text"] = text
+        return [text], 40
+
+    monkeypatch.setattr(engine, "measure_wrapped_lines", fake_measure)
+
+    def fake_composite(canvas_path, *_args, **_kwargs):
+        Path(canvas_path).unlink(missing_ok=True)
+        output_video_path.write_text("rendered")
+        return True
+
+    monkeypatch.setattr(engine, "composite_canvas_and_video", fake_composite)
+
+    request = engine.TemplateRenderRequest(
+        input_video_path=str(input_video_path),
+        output_video_path=str(output_video_path),
+        text="make me loud",
+        template_root=str(template_root),
+    )
+
+    assert engine.TemplateEngine(request).render() is True
+    assert measured["text"] == "MAKE ME LOUD"
+    assert output_video_path.read_text() == "rendered"
+
+
+def test_template_engine_reads_root_level_line_spacing(tmp_path, monkeypatch):
+    template_root = tmp_path / "template"
+    template_root.mkdir()
+    config = {
+        "canvas": {"width": 300, "height": 300},
+        "background": {"type": "color", "value": "#000000"},
+        "video": {"width_pct": 50, "vertical_align": "center"},
+        "text": {
+            "font": "",
+            "font_size": 32,
+            "min_font_size": 16,
+            "max_lines": 2,
+            "line_width_pct": 80,
+            "align": "center",
+            "position_relative_to_video": {"gap_px": 20},
+            "color": "#ffffff",
+            "highlight": {"enabled": False},
+        },
+        "text.line_spacing_factor": 1.1,
+    }
+    (template_root / "template.json").write_text(json.dumps(config), encoding="utf-8")
+
+    input_video_path = tmp_path / "input.mp4"
+    input_video_path.write_bytes(b"fake")
+    output_video_path = tmp_path / "output.mp4"
+
+    monkeypatch.setattr(engine, "probe_video_size", lambda _: (640, 360))
+
+    captured_factor = {}
+
+    def fake_measure(text, font, max_width, draw, **kwargs):
+        captured_factor["value"] = kwargs.get("line_spacing_factor")
+        return [text], 40
+
+    monkeypatch.setattr(engine, "measure_wrapped_lines", fake_measure)
+    def fake_composite(canvas_path, *_args, **_kwargs):
+        Path(canvas_path).unlink(missing_ok=True)
+        output_video_path.write_text("rendered")
+        return True
+
+    monkeypatch.setattr(engine, "composite_canvas_and_video", fake_composite)
+
+    request = engine.TemplateRenderRequest(
+        input_video_path=str(input_video_path),
+        output_video_path=str(output_video_path),
+        text="spacing test",
+        template_root=str(template_root),
+    )
+
+    assert engine.TemplateEngine(request).render() is True
+    assert captured_factor["value"] == 1.1

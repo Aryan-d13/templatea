@@ -164,7 +164,7 @@ class TemplateaAPI:
     
     async def download_file(self, url: str) -> Optional[bytes]:
         """Download a file from the API with retries and diagnostics."""
-        attempts = 20
+        attempts = 100
         delay_seconds = 2
         last_error: Optional[str] = None
 

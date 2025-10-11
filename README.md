@@ -89,6 +89,16 @@ On container start, the entrypoint runs `python -m api.db_init` to ensure the SQ
 ## Template Registry
 Template manifests live in `templates/*.json`. Each manifest declares an `id`, `module`, and defaults. The API loads these manifests at runtime and resolves renderer callables using `api/template_registry.py`.
 
+### Text casing configuration
+Each template can optionally force the rendered caption into a specific casing by setting `text.casing_mode` inside `template.json`. Supported values are:
+- `original` (default)
+- `upper`, `uppercase`, or `all_caps`
+- `lower`, `lowercase`, or `all_lower`
+- `sentence`, `sentence_case`, or `capitalize`
+- `title`, `titlecase`, or `title_case`
+
+The value can also be supplied via overrides when invoking the renderer; the transformation is applied before layout, highlights, and compositing.
+
 ## Notes
 - The API writes and serves from `workspace/` and indexes metadata in `db/workspaces.sqlite`.
 - The orchestration step updates workspace metadata with the chosen `template_id` for replayability.

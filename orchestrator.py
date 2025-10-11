@@ -37,7 +37,7 @@ _EMOJI_RE = re.compile(
     flags=re.UNICODE
 )
 
-_URL_SHORTCODE_RE = re.compile(r"(?:/p/|/reel/|/reels/|/tv/|/video/)([A-Za-z0-9_-]{6,})")
+_URL_SHORTCODE_RE = re.compile(r"(?:/p/|/reel/|/reels/|/tv/|/video/)([^/?#]+)")
 
 def clean_text_for_render(text: str) -> str:
     if not isinstance(text, str):
@@ -56,14 +56,14 @@ def derive_canonical_from_url(url: Optional[str]) -> Optional[str]:
     match = _URL_SHORTCODE_RE.search(url)
     if match:
         return match.group(1)
+    # Fallback only if URL has path segments (not just domain)
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    path = parsed.path.strip('/')
+    if not path:  # No path means just domain, return None
+        return None
     fallback = re.search(r"([A-Za-z0-9_-]{6,})", url)
     return fallback.group(1) if fallback else None
-
-try:
-    from api.template_registry import get_renderer_func, TemplateRegistryError
-except Exception:
-    get_renderer_func = None
-    TemplateRegistryError = RuntimeError
 
 # Config
 WORKSPACE_BASE = Path("workspace")
@@ -91,7 +91,7 @@ def write_status(ws: Path, step: str, status: str, error=None, retries=0, extra:
             # best-effort, ignore extra on failure
             pass
     p = ws / f"{step}.status"
-    tmp = p.with_suffix(".tmp")
+    tmp = ws / f"{step}.status.tmp"
     with open(tmp, "w", encoding="utf8") as f:
         json.dump(s, f)
     os.replace(str(tmp), str(p))
@@ -110,7 +110,7 @@ def read_meta(ws: Path) -> dict:
 
 def write_meta(ws: Path, meta: dict) -> None:
     meta_path = ws / "meta.json"
-    tmp = meta_path.with_suffix(".tmp")
+    tmp = ws / "meta.json.tmp"
     with open(tmp, "w", encoding="utf8") as handle:
         json.dump(meta, handle, ensure_ascii=False, indent=2)
     os.replace(str(tmp), str(meta_path))

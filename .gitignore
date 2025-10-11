@@ -6,19 +6,16 @@ workspace/
 frontend-react-native/
 frontend-react-native-v/
 frontend/
-# Virtual environments
+
 venv/
 .venv/
 env/
-# Testing
 .pytest_cache/
 
 
-# Distribution / packaging
 *.egg-info/
 dist/
 build/
 
-#DB
 *.sqlite3
 workspaces.sqlite

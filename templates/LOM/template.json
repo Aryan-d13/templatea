@@ -20,6 +20,7 @@
     },
     "text": {
       "font": "./assets/Anton.ttf",
+      "line_spacing_factor": 0.75,
       "font_size": 62,
       "min_font_size": 40,
       "max_lines": 2,
@@ -53,5 +54,8 @@
     "render": {
       "audio_merge": true,
       "ffmpeg_params": "-c:v libx264 -crf 18 -preset veryfast"
-    }
+    },
+
+    "text.casing_mode": "upper",
+    "text.line_spacing_factor" : 0.75
   }
