@@ -26,6 +26,10 @@ import os
 import re
 from typing import Dict, List, Optional
 from datetime import datetime
+from dotenv import load_dotenv
+import os
+
+load_dotenv() 
 
 import httpx
 from telegram import (

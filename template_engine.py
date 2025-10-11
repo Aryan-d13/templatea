@@ -11,11 +11,32 @@ from PIL import Image, ImageDraw, ImageFont
 import json
 import string
 import tempfile
+import requests
+import re
 import subprocess
 import shlex
 import os
 import math
+import logging
 from typing import Tuple, List, Set, Optional, Dict
+from dotenv import load_dotenv
+import os
+
+load_dotenv() 
+
+GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
+HIGHLIGHT_SYSTEM_PROMPT = (
+    "You are a text analyzer. Given a hook copy and a number n, identify the n consecutive words "
+    "that would be most impactful when highlighted. Follow the user's rules exactly."
+)
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[template_engine] %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+logger.propagate = False
 
 # Small util to call ffprobe
 def probe_video_size(path: str) -> Tuple[int,int]:
@@ -291,15 +312,119 @@ def draw_highlights(
             cursor_x += word_width + space_width
 
 
-def select_highlight_words_via_ai(text: str, top_k: int = 3) -> List[str]:
-    """
-    Default AI selector: picks longest words.
-    Returns list of individual words (not phrases).
-    """
+def _fallback_highlight_phrases(text: str, top_k: int) -> List[List[str]]:
     cleaned = [w.strip(".,!?:;\"'()[]{}") for w in text.split()]
-    cleaned = [w for w in cleaned if len(w) > 2]
+    cleaned = [w for w in cleaned if w]
+    if not cleaned:
+        logger.debug("highlight fallback: no tokens available")
     cleaned.sort(key=lambda w: -len(w))
-    return cleaned[:top_k]
+    limit = max(1, top_k)
+    phrases = [[w] for w in cleaned[:limit]]
+    logger.debug("highlight fallback selected tokens=%s", phrases)
+    return phrases
+
+
+def _call_groq_highlight_phrase(text: str, n: int, api_key: str, model: str = "llama-3.3-70b-versatile", timeout: int = 10) -> Optional[List[str]]:
+    if not api_key or not text or n <= 0:
+        return None
+    
+    n=1
+
+    logger.debug("highlight ai request: text_len=%d top_k=%d model=%s", len(text), n, model)
+
+    user_prompt = (
+        "You are a text analyzer. Given a hook copy, identify word "
+        "that would be most impactful when highlighted.\n\n"
+        f"INPUT:\nHook Copy: {text}\n"
+        "RULES:\n"
+        "1. Select exactly 1 consecutive words from the hook copy\n"
+        "2. Choose word that is most attention-grabbing or emotionally impactful\n"
+        # "3. The selected words must appear in sequence in the original text\n"
+        "4. Return ONLY the selected word as it appears in the text\n"
+        "5. No explanations, no formatting, no quotation marks, no additional text\n\n"
+        "OUTPUT:\n"
+        "[return only and only the selected word]"
+    )
+
+    logger.debug("highlight ai prompt preview=%r", user_prompt[:200])
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": HIGHLIGHT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0,
+    }
+
+    try:
+        resp = requests.post(GROQ_CHAT_COMPLETIONS_URL, headers=headers, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        logger.debug("highlight ai response status=%s body=%r", resp.status_code, resp.text[:200])
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 'unknown'
+        body = exc.response.text[:200] if exc.response is not None and getattr(exc.response, 'text', None) else ''
+        logger.warning("highlight ai request failed http status=%s body=%r", status, body)
+        return None
+    except Exception as exc:
+        logger.warning("highlight ai request failed: %s", exc)
+        return None
+
+    candidate = re.sub(r"\s+", " ", content.strip(" \"'"))
+    logger.debug("highlight ai raw candidate=%r", candidate)
+    words = candidate.split()
+    if len(words) != n:
+        logger.info("highlight ai rejected: expected %d words, got %d", n, len(words))
+        return None
+
+    pattern = r"\b" + r"\s+".join(re.escape(w) for w in words) + r"\b"
+
+    match = re.search(pattern, text, flags=re.IGNORECASE)
+    if not match:
+        logger.info("highlight ai rejected: candidate not found in original text")
+        return None
+
+    original_span = text[match.start():match.end()]
+    original_words = original_span.split()
+    if len(original_words) != n:
+        return None
+
+    logger.info("highlight ai accepted phrase=%s", original_words)
+    return original_words
+
+
+def select_highlight_words_via_ai(text: str, top_k: int = 3) -> List[List[str]]:
+    fallback = _fallback_highlight_phrases(text, top_k)
+    if not text:
+        logger.info("highlight ai skipped: empty text")
+        logger.info("highlight fallback tokens=%s", fallback)
+        return fallback
+    if top_k <= 0:
+        logger.info("highlight ai skipped: non-positive top_k=%s", top_k)
+        logger.info("highlight fallback tokens=%s", fallback)
+        return fallback
+
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        logger.info("highlight ai skipped: GROQ_API_KEY missing")
+        logger.info("highlight fallback tokens=%s", fallback)
+        return fallback
+
+    phrase = _call_groq_highlight_phrase(text, top_k, api_key)
+
+    if phrase:
+        logger.info("highlight ai using Groq phrase=%s", phrase)
+        return [phrase]
+
+    logger.info("highlight ai falling back to heuristic selection")
+    logger.info("highlight fallback tokens=%s", fallback)
+    return fallback
 
 def probe_duration(path):
     try:
@@ -542,8 +667,7 @@ class TemplateEngine:
             else:
                 # AI mode: use top_k from config (default 3)
                 top_k = int(hl_cfg.get("highlight_count", 3))
-                ai_words = select_highlight_words_via_ai(render_text, top_k=top_k)
-                highlight_phrases = [[w] for w in ai_words]  # Convert to phrase format
+                highlight_phrases = select_highlight_words_via_ai(render_text, top_k=top_k)
 
         # Draw highlights FIRST (behind text)
         if highlight_phrases:

@@ -20,6 +20,11 @@ from typing import Iterable, List
 
 from builtins import print as _builtin_print
 import unicodedata
+from dotenv import load_dotenv
+import os
+
+load_dotenv() 
+from ai_hook_orchestrator_perplexity import generate_ai_one_liners_browsing
 
 
 def _safe_print(*args, **kwargs):
@@ -62,27 +67,6 @@ DEFAULT_PROMPT = (
     "the extracted text as the response."
 )
 
-PERPLEXITY_SYSTEM_PROMPT = (
-    "You are an advanced advertising copywriter and digital research assistant.\n"
-    "You receive two caption variants for the same Instagram ad:\n"
-    "1) OCR_EXTRACTED_CAPTION from a video frame\n"
-    "2) DOWNLOADER_CAPTION sourced from the reel downloader's text file\n\n"
-    "Review both carefully. If they differ, cross-check and rely on the more complete / accurate "
-    "details while keeping all creative ideas consistent with the ad's intent. When facts are uncertain, "
-    "choose language that remains truthful but still produces strong marketing hooks.\n\n"
-    "If the caption references anything that benefits from live data (brands, events, trends, etc.), perform "
-    "a real-time search before drafting the copies so they stay precise.\n\n"
-    "Always generate exactly three alternative one-liner ad copies. Each line must be a punchy, ad-ready "
-    "sentence of at most 15 words.\n\n"
-    "You MUST respond with ONLY a valid JSON object. No markdown code fences, no ```json blocks, "
-    "no commentary, no extra text before or after. Just the raw JSON object.\n\n"
-    "The JSON structure must be:\n"
-    '{\n  "one_liners": [\n    "First punchy one-liner.",\n    "Second option here.",\n'
-    '    "Third option here."\n  ]\n}\n\n'
-    "Even if the captions seem uncertain or incomplete, you must still return this JSON object with three "
-    "plausible, high-quality options. Output ONLY the JSON object, nothing else."
-)
-
 GROQ_JSON_EXTRACTOR_PROMPT = '''You are a strict **JSON extractor & repairer**.
 Input: a single arbitrary string (may contain valid JSON, broken JSON, or text around JSON).
 Output: **exactly one** JSON value (object or array) – nothing else. No markdown, no code fences, no explanation, no extra characters before or after the JSON (no leading/trailing bytes, not even a newline). The JSON must be 100% RFC-validated (double quotes for strings, no comments, no trailing commas).
@@ -111,7 +95,7 @@ Rules – follow them exactly:
 7. Never output any extra keys except `error`, `original`, `extracted`, or `unparsed` when following rule 5–6.
 8. ALWAYS ensure the output is valid JSON (no trailing commas, proper quoting, proper true/false/null).
 9. Output must be the **raw JSON text only** – nothing else, not even a single extra space or newline outside the JSON.
-10.Under no circumstances should you use em dashes (—) or en dashes (–) in your output.
+10.Under no circumstances should you use em dashes (—) or en dashes (–) or any similar kind of dash. no dashes at all in your output.
 11.Review and revise your response to ensure em dashes never appear in the final output for any reason.
 
 Now parse and respond with the single, valid JSON value for the following input string (do not repeat the input, do not add commentary):
@@ -182,210 +166,64 @@ def extract_json_from_string(text: str) -> dict | list | None:
     return None
 
 
-def call_groq_validator(
-    api_key: str,
-    input_text: str,
-    model: str = "OpenAI/gpt-oss-120b",
-    timeout: int = 60,
-) -> dict:
-    """
-    Calls Groq API to validate and extract/repair JSON from input text.
-    Returns a dict with 'status', 'result', and optional 'error' keys.
-    """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    
-    prompt = GROQ_JSON_EXTRACTOR_PROMPT.format(input_text=input_text)
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0,
-    }
-    
-    try:
-        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-        
-        content = data["choices"][0]["message"]["content"].strip()
-        
-        # Try to parse the Groq response
-        parsed = extract_json_from_string(content)
-        if parsed is None:
-            # Fallback: try direct parse
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError:
-                return {
-                    "status": "error",
-                    "error": f"Groq returned non-JSON content: {content[:200]}",
-                }
-
-        # If Groq returned a primitive (string/number/bool/null) treat it as an error
-        if not isinstance(parsed, (dict, list)):
-            return {
-                "status": "error",
-                "error": "Groq returned a non-object JSON value",
-                "raw": parsed,
-            }
-
-        return {
-            "status": "success",
-            "result": parsed,
-        }
-
-        
-    except Exception as exc:
-        return {
-            "status": "error",
-            "error": str(exc),
-        }
-
-
-def call_groq_direct_generation(
-    ocr_caption: str,
-    api_key: str,
-    *,
-    downloader_caption: str | None = None,
-    timeout: int = 60,
-    model: str = "OpenAI/gpt-oss-120b",
-) -> List[str]:
-    """
-    Calls Groq directly with the same prompt as Perplexity (fallback when Perplexity fails).
-    """
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    
-    user_sections = [
-        "OCR_EXTRACTED_CAPTION:",
-        ocr_caption if ocr_caption else "[EMPTY]",
-        "",
-        "DOWNLOADER_CAPTION:",
-        downloader_caption if downloader_caption else "[NOT AVAILABLE]",
-    ]
-    
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": PERPLEXITY_SYSTEM_PROMPT},
-            {"role": "user", "content": "\n".join(user_sections).strip()},
-        ],
-        "temperature": 0.7,
-    }
-    
-    response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=timeout)
-    response.raise_for_status()
-    data = response.json()
-    
-    content = data["choices"][0]["message"]["content"].strip()
-    
-    # Extract JSON
-    parsed = extract_json_from_string(content)
-    if parsed is None:
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"Groq response is not valid JSON: {content!r}") from exc
-
-    # If parsed is a primitive (e.g. "error"), give explicit, helpful error
-    if not isinstance(parsed, dict):
-        raise RuntimeError(f"Groq returned non-object JSON: {repr(parsed)}")
-
-    one_liners = parsed.get("one_liners")
-    if not isinstance(one_liners, list):
-        raise RuntimeError(f"Groq response missing or bad 'one_liners': {repr(parsed)}")
-
-    
-    cleaned = [str(line).strip() for line in one_liners if isinstance(line, str) and line.strip()]
-    if len(cleaned) != 3:
-        raise RuntimeError(f"Expected exactly 3 one-liners, received: {cleaned}")
-    
-    return cleaned
-
-
 def generate_ai_one_liners(
     ocr_caption: str,
-    perplexity_api_key: str,    # kept in signature for compatibility; ignored now
+    perplexity_api_key: str,
     groq_api_key: str,
     *,
     downloader_caption: str | None = None,
     timeout: int = 60,
-    perplexity_model: str = "sonar-pro",  # unused, kept for compatibility
+    perplexity_model: str = "sonar-pro",
     groq_model: str = "OpenAI/gpt-oss-120b",
 ) -> dict:
     """
-    Groq-only AI one-liners generation (Perplexity commented out).
+    Wrapper around the orchestrated Perplexity + Groq pipeline.
     Returns dict with 'one_liners', 'source', and 'validation_notes'.
     """
-    result = {
-        "one_liners": [],
-        "source": "unknown",
-        "validation_notes": [],
-    }
-
-    # Ensure we have Groq API key
     if not groq_api_key:
-        result["validation_notes"].append("GROQ_API_KEY missing; AI generation disabled.")
         raise RuntimeError("GROQ_API_KEY required for AI generation")
 
-    # Prepare the user-friendly prompt for Groq:
-    # It receives both OCR-extracted caption and the downloader caption (if any).
-    groq_system = (
-        "You are an expert advertising copywriter and JSON-output validator. "
-        "You will receive two inputs: OCR_EXTRACTED_CAPTION (what was read from the video frame) "
-        "and DOWNLOADER_CAPTION (the caption text provided by the downloader, if any). "
-        "Compare them and produce **three** short, punchy one-line ad copy suggestions that are "
-        "marketing-ready. Be creative but do not hallucinate facts. If something is unclear, "
-        "prefer neutral phrasing. Output EXACTLY one valid JSON object (no extra text) with shape:\n"
-        '{"one_liners": ["...", "...", "..."]}\n'
-        "Use only double-quoted JSON strings and return a valid RFC-compliant JSON object."
+    orchestrator_kwargs = dict(
+        groq_api_key=groq_api_key,
+        perplexity_api_key=perplexity_api_key or None,
+        downloader_caption=downloader_caption,
+        use_perplexity=bool(perplexity_api_key),
+        timeout=timeout,
+        pplx_model=perplexity_model,
+        drafts_model="llama-3.1-8b-instant",  # Add this
+        critic_model="openai/gpt-oss-20b"
     )
 
-    user_payload_parts = []
-    user_payload_parts.append("OCR_EXTRACTED_CAPTION:")
-    user_payload_parts.append(ocr_caption if ocr_caption else "")
-    user_payload_parts.append("")
-    user_payload_parts.append("DOWNLOADER_CAPTION:")
-    user_payload_parts.append(downloader_caption if downloader_caption else "")
+    if groq_model and groq_model != "OpenAI/gpt-oss-120b":
+        orchestrator_kwargs["drafts_model"] = groq_model
 
-    try:
-        # Call Groq direct generation (this is the single allowed pathway now)
-        one_liners = call_groq_direct_generation(
-            ocr_caption,
-            groq_api_key,
-            downloader_caption=downloader_caption,
-            timeout=timeout,
-            model=groq_model,
-        )
-        result["one_liners"] = one_liners
-        result["source"] = "groq_direct"
-        result["validation_notes"].append("Groq direct generation successful")
-        return result
+    result = generate_ai_one_liners_browsing(
+        ocr_caption or "",
+        **orchestrator_kwargs,
+    )
 
-    except Exception as groq_exc:
-        result["validation_notes"].append(f"Groq direct generation failed: {str(groq_exc)}")
-        # final fallback: return small safe defaults (so pipeline doesn't break)
-        if ocr_caption:
-            snippet = ocr_caption.strip().splitlines()[0][:120]
-            fallback = [
-                snippet[:60],
-                snippet[:40] + ("…" if len(snippet) > 40 else ""),
-                "Watch this ad now!"
-            ]
-        else:
-            fallback = ["Watch this now!", "Don’t miss this!", "Tap to see why!"]
+    sanitized = [
+        _clean_text(line)
+        for line in result.get("one_liners", [])
+        if isinstance(line, str) and line.strip()
+    ]
 
-        result["one_liners"] = fallback
-        result["source"] = "local_fallback"
-        result["validation_notes"].append("Returning local fallback one-liners")
-        return result
+    if len(sanitized) < 3:
+        sanitized.extend([
+            "Someone promote this intern.",
+            "Peak ad. No notes.",
+            "POV: you're already sold.",
+        ])
+
+    sanitized = sanitized[:3]
+    result["one_liners"] = sanitized
+    result.setdefault("source", "groq_orchestrated")
+    result.setdefault("validation_notes", [])
+
+    if not perplexity_api_key:
+        result["validation_notes"].append("Perplexity browsing disabled (no API key).")
+
+    return result
 
 
 
@@ -525,11 +363,11 @@ def main() -> None:
         "--groq-key",
         help="Override GROQ_API_KEY environment variable",
     )
-    parser.add_argument(
-        "--groq-model",
-        default="OpenAI/gpt-oss-120b",
-        help="Groq model to use for validation and fallback generation",
-    )
+    # parser.add_argument(
+    #     "--groq-model",
+    #     default="OpenAI/gpt-oss-120b",
+    #     help="Groq model to use for validation and fallback generation",
+    # )
     parser.add_argument(
         "--perplexity-timeout",
         type=int,
@@ -547,6 +385,16 @@ def main() -> None:
         action="store_true",
         help="Skip generating AI recommended one-liner copies",
     )
+    parser.add_argument(
+        "--groq-model",
+        default="llama-3.1-8b-instant",  # Match orchestrator default
+        help="Groq model to use for drafts generation",
+)
+    parser.add_argument(
+        "--groq-critic-model",
+        default="openai/gpt-oss-20b",  # Add critic model option
+        help="Groq model to use for critic/selection stage",
+)
     parser.add_argument(
         "--caption-dir",
         type=Path,
@@ -570,7 +418,7 @@ def main() -> None:
     
     ai_copy_enabled = not args.disable_ai_copy
     if ai_copy_enabled and not perplexity_api_key:
-        print("[WARN] PERPLEXITY_API_KEY not provided. Will use Groq direct generation only.")
+        print("[INFO] PERPLEXITY_API_KEY not provided. Skipping Perplexity browsing.")
     if ai_copy_enabled and not groq_api_key:
         print("[ERROR] GROQ_API_KEY is required for AI copy generation.")
         ai_copy_enabled = False
@@ -628,51 +476,70 @@ def main() -> None:
             result["ocr_caption"] = ocr_caption if ocr_caption else None
             result["effective_caption"] = caption_text
 
+            # Replace the entire try/except block (around line 389-420) with:
+
             if ai_copy_enabled:
                 if not (ocr_caption or manual_caption_text):
                     result["ai_copy_status"] = "skipped"
                     result.setdefault("ai_recommended_copies", [])
                     result.setdefault("ai_copy_source", None)
                     result.setdefault("ai_validation_notes", [])
-                    print("[WARN] No caption text available (OCR and downloader empty). Skipping AI recommended copies.\n")
+                    print("[WARN] No caption text available. Skipping AI recommended copies.\n")
                 else:
-                    try:
-                        ai_result = generate_ai_one_liners(
-                            ocr_caption,
-                            perplexity_api_key,
-                            groq_api_key,
-                            downloader_caption=manual_caption_text if manual_caption_text else None,
-                            timeout=args.perplexity_timeout,
-                            perplexity_model=args.perplexity_model,
-                            groq_model=args.groq_model,
-                        )
-                        sanitized_copies = [
-                            _clean_text(line) for line in ai_result["one_liners"]
-                        ]
-                        result["ai_copy_status"] = "success"
-                        result["ai_recommended_copies"] = sanitized_copies
-                        result["ai_copy_source"] = ai_result["source"]
-                        result["ai_validation_notes"] = ai_result["validation_notes"]
-                        
-                        print(f"[OK] AI recommended copies (source: {ai_result['source']}):")
-                        for idx, line in enumerate(sanitized_copies, start=1):
-                            print(f"  {idx}. {line}")
-                        if ai_result["validation_notes"]:
-                            print(f"[INFO] Validation notes:")
-                            for note in ai_result["validation_notes"]:
-                                print(f"  - {note}")
-                        print()
+                    # No try/except needed - orchestrator never raises
+                    ai_result = generate_ai_one_liners(
+                        ocr_caption,
+                        perplexity_api_key,
+                        groq_api_key,
+                        downloader_caption=manual_caption_text if manual_caption_text else None,
+                        timeout=args.perplexity_timeout,
+                        perplexity_model=args.perplexity_model,
+                        groq_model=args.groq_model,
+                    )
                     
-                    except Exception as ai_exc:
-                        result["ai_copy_status"] = "error"
-                        result["ai_copy_error"] = str(ai_exc)
-                        result.setdefault("ai_recommended_copies", [])
-                        result.setdefault("ai_copy_source", None)
-                        result.setdefault("ai_validation_notes", [])
-                        print(f"[ERROR] Failed to generate AI recommended copies: {ai_exc}")
-                        print("[ERROR] Traceback:")
-                        traceback.print_exc()
-                        print()
+                    # Detect problems by checking the 'source' field
+                    if ai_result["source"] == "local_fallback":
+                        result["ai_copy_status"] = "fallback"
+                        print("[WARN] AI generation fell back to generic one-liners")
+                    else:
+                        result["ai_copy_status"] = "success"
+
+                    validation_notes = ai_result.get("validation_notes", [])
+        
+                    # Check for errors in validation notes
+                    has_errors = any(
+                        "error" in note.lower() or "fail" in note.lower() 
+                        for note in validation_notes
+                    )
+                    
+                    if ai_result["source"] == "local_fallback":
+                        result["ai_copy_status"] = "fallback"
+                        print("[WARN] Using fallback one-liners (API calls failed)")
+                    elif has_errors:
+                        result["ai_copy_status"] = "degraded"
+                        print("[WARN] AI generation succeeded with some errors (check validation_notes)")
+                    elif ai_result["source"] == "groq_orchestrated":
+                        result["ai_copy_status"] = "success_basic"
+                        print("[OK] AI generation succeeded (no web search)")
+                    elif ai_result["source"] == "groq_orchestrated_web":
+                        result["ai_copy_status"] = "success_enhanced"
+                        print("[OK] AI generation succeeded with Perplexity browsing")
+                    else:
+                        result["ai_copy_status"] = "success"        
+                    
+                    sanitized_copies = [_clean_text(line) for line in ai_result["one_liners"]]
+                    result["ai_recommended_copies"] = sanitized_copies
+                    result["ai_copy_source"] = ai_result["source"]
+                    result["ai_validation_notes"] = ai_result["validation_notes"]
+                    
+                    print(f"[OK] AI recommended copies (source: {ai_result['source']}):")
+                    for idx, line in enumerate(sanitized_copies, start=1):
+                        print(f"  {idx}. {line}")
+                    if ai_result["validation_notes"]:
+                        print(f"[INFO] Validation notes:")
+                        for note in ai_result["validation_notes"]:
+                            print(f"  - {note}")
+                    print()
 
 
             else:

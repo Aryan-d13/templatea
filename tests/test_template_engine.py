@@ -137,7 +137,7 @@ def test_select_highlight_words_via_ai_prefers_longer_tokens():
 
     selected = engine.select_highlight_words_via_ai(text, top_k=2)
 
-    assert selected == ["demonstration", "highlight"]
+    assert selected == [["demonstration"], ["highlight"]]
 
 
 def test_template_engine_render_renders_canvas(tmp_path, monkeypatch):

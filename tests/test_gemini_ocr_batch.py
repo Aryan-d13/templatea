@@ -24,7 +24,9 @@ class TestGeminiOcrBatch(unittest.TestCase):
         mock_cap.isOpened.return_value = True
         mock_cap.get.side_effect = [100, 0] # total frames, other gets
         mock_cap.read.return_value = (True, 'fake_frame')
-        mock_imencode.return_value = (True, b'fake_buffer')
+        fake_buffer = MagicMock()
+        fake_buffer.tobytes.return_value = b'fake_buffer'
+        mock_imencode.return_value = (True, fake_buffer)
 
         frame_bytes = extract_frame(Path('/fake/video.mp4'), 0.5)
 
@@ -45,18 +47,22 @@ class TestGeminiOcrBatch(unittest.TestCase):
         self.assertEqual(text, 'Hello World')
         mock_post.assert_called_once()
 
-    @patch('gemini_ocr_batch.call_groq_direct_generation')
-    def test_generate_ai_one_liners(self, mock_call_groq):
-        mock_call_groq.return_value = ['one', 'two', 'three']
+    @patch('Templatea.gemini_ocr_batch.generate_ai_one_liners_browsing')
+    def test_generate_ai_one_liners(self, mock_orchestrator):
+        mock_orchestrator.return_value = {
+            "one_liners": ['one', 'two', 'three'],
+            "source": "groq_orchestrated",
+            "validation_notes": ["ok"],
+        }
 
         result = generate_ai_one_liners('ocr_caption', 'fake_perplexity_key', 'fake_groq_key')
 
         self.assertEqual(len(result['one_liners']), 3)
-        self.assertEqual(result['source'], 'groq_direct')
-        mock_call_groq.assert_called_once()
+        self.assertEqual(result['source'], 'groq_orchestrated')
+        mock_orchestrator.assert_called_once()
 
-    @patch('gemini_ocr_batch.call_gemini')
-    @patch('gemini_ocr_batch.extract_frame')
+    @patch('Templatea.gemini_ocr_batch.call_gemini')
+    @patch('Templatea.gemini_ocr_batch.extract_frame')
     def test_process_video(self, mock_extract_frame, mock_call_gemini):
         mock_extract_frame.return_value = b'fake_frame_bytes'
         mock_call_gemini.return_value = 'Hello World'
