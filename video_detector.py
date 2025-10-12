@@ -7,35 +7,311 @@ import subprocess
 import tempfile
 import shutil
 
-def strip_light_edges(img, thresh=252, coverage=0.90):
-    h, w = img.shape[:2]
-    top, bottom, left, right = 0, h, 0, w
+def detect_corner_artifacts(frame, bbox, corner_sample_size=50):
+    """
+    Detect if corners have artifacts (curved white edges, rounded borders).
+    Returns True if artifacts detected, along with recommended inset.
+    """
+    x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
+    crop = frame[y:y+h, x:x+w]
+    
+    if crop.size == 0:
+        return False, 0
+    
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+    crop_h, crop_w = gray.shape
+    
+    # Sample corners
+    sample_size = min(corner_sample_size, crop_h // 4, crop_w // 4)
+    if sample_size < 10:
+        return False, 0
+    
+    corners = {
+        'tl': gray[0:sample_size, 0:sample_size],
+        'tr': gray[0:sample_size, crop_w-sample_size:crop_w],
+        'bl': gray[crop_h-sample_size:crop_h, 0:sample_size],
+        'br': gray[crop_h-sample_size:crop_h, crop_w-sample_size:crop_w]
+    }
+    
+    # Check if corners are brighter/darker than center
+    center = gray[crop_h//4:3*crop_h//4, crop_w//4:3*crop_w//4]
+    center_median = np.median(center)
+    
+    artifact_count = 0
+    max_diff = 0
+    
+    for corner_name, corner in corners.items():
+        corner_median = np.median(corner)
+        diff = abs(corner_median - center_median)
+        max_diff = max(max_diff, diff)
+        
+        # If corner is significantly different from center (likely artifact)
+        if diff > 30:  # Threshold for brightness difference
+            artifact_count += 1
+    
+    # If 2+ corners have artifacts, likely rounded template
+    has_artifacts = artifact_count >= 2
+    
+    # Recommend inset based on severity
+    if max_diff > 80:
+        recommended_inset = 12
+    elif max_diff > 50:
+        recommended_inset = 10
+    elif max_diff > 30:
+        recommended_inset = 8
+    else:
+        recommended_inset = 5
+    
+    return has_artifacts, recommended_inset
 
-    def is_light_row(row):
-        # If at least coverage fraction is brighter than thresh
-        return np.mean(np.all(row >= thresh, axis=1)) >= coverage
 
-    def is_light_col(col):
-        return np.mean(np.all(col >= thresh, axis=1)) >= coverage
+def aggressive_trim_uniform_borders(frame, bbox, max_trim_px=0, uniformity_threshold=3):
+    """
+    Aggressively trim thin uniform borders (like 1-2px white edges).
+    Now checks SUBSECTIONS of edges to catch curved borders.
+    """
+    x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+    
+    # Crop to current bbox
+    crop = gray[y:y+h, x:x+w]
+    if crop.size == 0:
+        return bbox
+    
+    crop_h, crop_w = crop.shape
+    trim = {'top': 0, 'bottom': 0, 'left': 0, 'right': 0}
+    
+    # Helper function to check if edge segment is uniform
+    def is_edge_uniform(pixels, threshold):
+        return np.std(pixels) < threshold
+    
+    # Trim top - check multiple segments
+    for i in range(min(max_trim_px, crop_h)):
+        row = crop[i, :]
+        # Check if at least 60% of the row is uniform
+        segment_size = len(row) // 5
+        uniform_segments = 0
+        for j in range(5):
+            start = j * segment_size
+            end = (j + 1) * segment_size if j < 4 else len(row)
+            if is_edge_uniform(row[start:end], uniformity_threshold):
+                uniform_segments += 1
+        
+        if uniform_segments >= 3:  # At least 60% uniform
+            trim['top'] = i + 1
+        else:
+            break
+    
+    # Trim bottom
+    for i in range(min(max_trim_px, crop_h)):
+        row = crop[crop_h - 1 - i, :]
+        segment_size = len(row) // 5
+        uniform_segments = 0
+        for j in range(5):
+            start = j * segment_size
+            end = (j + 1) * segment_size if j < 4 else len(row)
+            if is_edge_uniform(row[start:end], uniformity_threshold):
+                uniform_segments += 1
+        
+        if uniform_segments >= 3:
+            trim['bottom'] = i + 1
+        else:
+            break
+    
+    # Trim left
+    for i in range(min(max_trim_px, crop_w)):
+        col = crop[:, i]
+        segment_size = len(col) // 5
+        uniform_segments = 0
+        for j in range(5):
+            start = j * segment_size
+            end = (j + 1) * segment_size if j < 4 else len(col)
+            if is_edge_uniform(col[start:end], uniformity_threshold):
+                uniform_segments += 1
+        
+        if uniform_segments >= 3:
+            trim['left'] = i + 1
+        else:
+            break
+    
+    # Trim right
+    for i in range(min(max_trim_px, crop_w)):
+        col = crop[:, crop_w - 1 - i]
+        segment_size = len(col) // 5
+        uniform_segments = 0
+        for j in range(5):
+            start = j * segment_size
+            end = (j + 1) * segment_size if j < 4 else len(col)
+            if is_edge_uniform(col[start:end], uniformity_threshold):
+                uniform_segments += 1
+        
+        if uniform_segments >= 3:
+            trim['right'] = i + 1
+        else:
+            break
+    
+    # Apply trim
+    new_x = x + trim['left']
+    new_y = y + trim['top']
+    new_w = w - trim['left'] - trim['right']
+    new_h = h - trim['top'] - trim['bottom']
+    
+    # Ensure valid dimensions
+    if new_w < 50 or new_h < 50:
+        return bbox
+    
+    return {
+        'x': int(new_x),
+        'y': int(new_y),
+        'w': int(new_w),
+        'h': int(new_h)
+    }
 
-    # Top
-    while top < bottom-1 and is_light_row(img[top:top+1, :, :]):
-        top += 1
-    # Bottom
-    while bottom-1 > top and is_light_row(img[bottom-1:bottom, :, :]):
-        bottom -= 1
-    # Left
-    while left < right-1 and is_light_col(img[:, left:left+1, :]):
-        left += 1
-    # Right
-    while right-1 > left and is_light_col(img[:, right-1:right, :]):
-        right -= 1
 
-    return img[top:bottom, left:right]
+def apply_corner_inset(bbox, inset_px=8):
+    """
+    Inset bbox by specified pixels to avoid rounded corner artifacts.
+    
+    Args:
+        bbox: Current bounding box
+        inset_px: Pixels to inset from each edge
+    
+    Returns:
+        Updated bbox with inset applied
+    """
+    new_w = bbox['w'] - (2 * inset_px)
+    new_h = bbox['h'] - (2 * inset_px)
+    
+    # Ensure minimum dimensions
+    if new_w < 50 or new_h < 50:
+        print(f"Warning: Inset would make bbox too small, skipping corner inset")
+        return bbox
+    
+    return {
+        'x': bbox['x'] + inset_px,
+        'y': bbox['y'] + inset_px,
+        'w': new_w,
+        'h': new_h
+    }
 
+
+def detect_uniform_borders(frame, threshold=5):
+    """
+    Detect and return crop bounds to remove uniform (static) borders of any color.
+    Returns (top, bottom, left, right) - the indices to crop to.
+    """
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
+    
+    def is_uniform_row(row_data):
+        """Check if a row is uniform (low variance)"""
+        return np.std(row_data) < threshold
+    
+    def is_uniform_col(col_data):
+        """Check if a column is uniform (low variance)"""
+        return np.std(col_data) < threshold
+    
+    # Scan from top
+    top = 0
+    for i in range(h):
+        if not is_uniform_row(gray[i, :]):
+            top = i
+            break
+    
+    # Scan from bottom
+    bottom = h
+    for i in range(h - 1, -1, -1):
+        if not is_uniform_row(gray[i, :]):
+            bottom = i + 1
+            break
+    
+    # Scan from left
+    left = 0
+    for i in range(w):
+        if not is_uniform_col(gray[:, i]):
+            left = i
+            break
+    
+    # Scan from right
+    right = w
+    for i in range(w - 1, -1, -1):
+        if not is_uniform_col(gray[:, i]):
+            right = i + 1
+            break
+    
+    return top, bottom, left, right
+
+
+def refine_bbox_with_content_analysis(sampled_frames, initial_bbox, original_width, original_height):
+    """
+    Refine the bounding box by analyzing actual content across multiple frames.
+    Ensures the box contains ONLY dynamic content, no static borders.
+    Returns a consistent rectangular bbox.
+    """
+    x, y, w, h = initial_bbox['x'], initial_bbox['y'], initial_bbox['w'], initial_bbox['h']
+    
+    # Extract the region from multiple frames
+    crops = []
+    for i in range(0, len(sampled_frames), max(1, len(sampled_frames) // 10)):
+        frame = sampled_frames[i]
+        crop = frame[y:y+h, x:x+w]
+        crops.append(crop)
+    
+    if len(crops) == 0:
+        return initial_bbox
+    
+    # Find the tightest consistent bounds across all sampled crops
+    top_bounds = []
+    bottom_bounds = []
+    left_bounds = []
+    right_bounds = []
+    
+    for crop in crops:
+        if crop.size == 0:
+            continue
+        top, bottom, left, right = detect_uniform_borders(crop, threshold=10)
+        top_bounds.append(top)
+        bottom_bounds.append(bottom)
+        left_bounds.append(left)
+        right_bounds.append(right)
+    
+    if not top_bounds:
+        return initial_bbox
+    
+    # Use conservative estimates (tightest crop that appears in most frames)
+    # We want to ensure NO static border pixels are included
+    final_top = int(np.percentile(top_bounds, 75))  # Be conservative
+    final_bottom = int(np.percentile(bottom_bounds, 25))  # Be conservative
+    final_left = int(np.percentile(left_bounds, 75))  # Be conservative
+    final_right = int(np.percentile(right_bounds, 25))  # Be conservative
+    
+    # Apply to original bbox coordinates
+    refined_x = x + final_left
+    refined_y = y + final_top
+    refined_w = final_right - final_left
+    refined_h = final_bottom - final_top
+    
+    # Safety checks
+    refined_x = max(0, refined_x)
+    refined_y = max(0, refined_y)
+    refined_w = min(refined_w, original_width - refined_x)
+    refined_h = min(refined_h, original_height - refined_y)
+    
+    # Ensure minimum size
+    if refined_w < 50 or refined_h < 50:
+        print("Warning: Refined bbox too small, using initial bbox")
+        return initial_bbox
+    
+    return {
+        'x': int(refined_x),
+        'y': int(refined_y),
+        'w': int(refined_w),
+        'h': int(refined_h)
+    }
 
 
 def remove_background_border(frame, bbox, background_thresh=250):
+    """Remove light background borders by adjusting bbox"""
     x, y, w, h = bbox['x'], bbox['y'], bbox['w'], bbox['h']
     # Defend against out-of-bounds and minimum size
     while h > 1 and np.all(frame[y, x:x+w] > background_thresh):     # Top edge
@@ -51,7 +327,9 @@ def remove_background_border(frame, bbox, background_thresh=250):
     return {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
 
 
-def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
+def detect_and_crop_video(input_path, output_path, confidence_threshold=0.0, 
+                         handle_rounded_corners=True, corner_inset_px=8,
+                         aggressive_border_trim=True, border_trim_px=3):
     """
     Detects and extracts inner video from video-in-video format.
     
@@ -59,6 +337,10 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
         input_path: Path to input video file
         output_path: Path where cropped video will be saved
         confidence_threshold: Minimum confidence to perform cropping (0-100)
+        handle_rounded_corners: If True, insets crop to avoid rounded corner artifacts
+        corner_inset_px: Pixels to inset from each edge when handling rounded corners
+        aggressive_border_trim: If True, performs aggressive trimming of uniform borders
+        border_trim_px: Maximum pixels to trim from each edge during aggressive trim
     
     Returns:
         dict: Detection results with keys:
@@ -247,19 +529,7 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
     
     best_region = max(regions, key=lambda r: r['score'])
     
-    if best_region['score'] < 40.0:
-        cap.release()
-        print(f"Best region score too low ({best_region['score']:.1f}). Returning original video.")
-        subprocess.run(['cp', str(input_path), str(output_path)], check=True)
-        return {
-            'detected': False,
-            'confidence': best_region['score'],
-            'output': str(output_path),
-            'bbox': best_region['bbox'],
-            'original_dimensions': {'width': width, 'height': height},
-            'cropped_dimensions': None
-        }
-    
+    # Always use the best region found, no minimum score requirement
     initial_confidence = min(best_region['score'], 100.0)
     bbox = best_region['bbox']
     
@@ -339,10 +609,41 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
     }
     
     print(f"Refined bbox: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
-    # === Fix to remove stray static background edge ===
+    
+    # Remove light background borders
     refined_bbox = remove_background_border(mid_frame, refined_bbox, background_thresh=250)
-    print(f"Final bbox after background strip removal: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
-
+    print(f"After light border removal: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+    
+    # ========================
+    # 5.5. CONTENT-BASED REFINEMENT (NEW)
+    # ========================
+    print("Performing content analysis to remove static borders...")
+    refined_bbox = refine_bbox_with_content_analysis(sampled_frames, refined_bbox, width, height)
+    print(f"After content analysis: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+    
+    # ========================
+    # 5.6. FINAL EDGE REFINEMENTS
+    # ========================
+    
+    # First, detect if we have corner artifacts
+    has_corner_artifacts, recommended_inset = detect_corner_artifacts(mid_frame, refined_bbox)
+    print(f"Corner artifact detection: {has_corner_artifacts}, recommended inset: {recommended_inset}px")
+    
+    if aggressive_border_trim:
+        print(f"Applying aggressive border trim (max {border_trim_px}px)...")
+        refined_bbox = aggressive_trim_uniform_borders(mid_frame, refined_bbox, 
+                                                       max_trim_px=border_trim_px, 
+                                                       uniformity_threshold=1)  # Very sensitive
+        print(f"After aggressive trim: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+    
+    if handle_rounded_corners:
+        # Use detected inset if available, otherwise use parameter
+        inset_to_apply = recommended_inset if has_corner_artifacts else corner_inset_px
+        print(f"Applying corner inset ({inset_to_apply}px)...")
+        refined_bbox = apply_corner_inset(refined_bbox, inset_px=inset_to_apply)
+        print(f"After corner inset: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
+    
+    print(f"Final bbox: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
     
     # ========================
     # 6. TEMPORAL CONSISTENCY CHECK
@@ -473,30 +774,12 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=00.0):
         if not ret:
             break
         
-        # Crop frame
+        # SIMPLE RECTANGULAR CROP - NO MASKING, NO PER-FRAME PROCESSING
+        # This ensures consistent rectangular output across all frames
         cropped = frame[refined_bbox['y']:refined_bbox['y'] + refined_bbox['h'],
                        refined_bbox['x']:refined_bbox['x'] + refined_bbox['w']]
         
-        # --- After cropping the frame ---
-        cropped = frame[refined_bbox['y']:refined_bbox['y'] + refined_bbox['h'],
-                        refined_bbox['x']:refined_bbox['x'] + refined_bbox['w']]
-
-        # Create grayscale and threshold to find inner contour (assume nearly white background)
-        gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 245, 255, cv2.THRESH_BINARY_INV)
-
-        # Find largest contour
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if contours:
-            best_contour = max(contours, key=cv2.contourArea)
-            mask = np.zeros_like(gray)
-            cv2.drawContours(mask, [best_contour], -1, 255, thickness=-1)
-            # Mask the cropped image
-            cropped = cv2.bitwise_and(cropped, cropped, mask=mask)
-        # Now write as usual
-        cropped = strip_light_edges(cropped, thresh=252, coverage=0.90)
         out.write(cropped)
-      
         frame_count += 1
         
         if frame_count % 100 == 0:
