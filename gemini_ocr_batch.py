@@ -24,8 +24,14 @@ from dotenv import load_dotenv
 import os
 
 load_dotenv() 
-from ai_hook_orchestrator_perplexity import generate_ai_one_liners_browsing
+from ai_hook_orchestrator_perplexity import (
+    generate_ai_one_liners_browsing,
+    generate_caption_with_hashtags,
+)
 
+perplexity_api_key = (os.getenv("PERPLEXITY_API_KEY") or "").strip()
+groq_api_key = os.getenv("GROQ_API_KEY") 
+api_key = os.getenv("GEMINI_API_KEY")
 
 def _safe_print(*args, **kwargs):
     encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
@@ -226,6 +232,25 @@ def generate_ai_one_liners(
     return result
 
 
+def detect_workspace_root(video_path: Path) -> Path | None:
+    """
+    Try to locate the canonical workspace folder (contains 00_raw) for a given artifact.
+    """
+    try:
+        resolved = video_path.resolve()
+    except Exception:
+        resolved = video_path
+
+    search_order = [resolved.parent] + list(resolved.parents)
+    for candidate in search_order:
+        if candidate.name == "00_raw" and candidate.parent.exists():
+            ws = candidate.parent
+            if (ws / "00_raw").is_dir():
+                return ws
+        if (candidate / "00_raw").is_dir():
+            return candidate
+    return None
+
 
 def gather_video_files(paths: Iterable[str], extensions: Iterable[str]) -> List[Path]:
     exts = {ext.lower().lstrip(".") for ext in extensions}
@@ -409,12 +434,11 @@ def main() -> None:
     args = parser.parse_args()
     load_env_file()
 
-    api_key = args.api_key or os.getenv("GEMINI_API_KEY")
+    
     if not api_key:
         raise SystemExit("Set GEMINI_API_KEY (environment or .env) or use --api-key to provide a Gemini API key")
 
-    perplexity_api_key = (args.perplexity_key or os.getenv("PERPLEXITY_API_KEY") or "").strip()
-    groq_api_key = os.getenv("GROQ_API_KEY") or args.groq_key or ""
+    
     
     ai_copy_enabled = not args.disable_ai_copy
     if ai_copy_enabled and not perplexity_api_key:
@@ -475,6 +499,8 @@ def main() -> None:
             result["manual_caption"] = manual_caption_text if manual_caption_text else None
             result["ocr_caption"] = ocr_caption if ocr_caption else None
             result["effective_caption"] = caption_text
+            workspace_root = detect_workspace_root(video)
+            result["workspace_root"] = str(workspace_root) if workspace_root else None
 
             # Replace the entire try/except block (around line 389-420) with:
 
@@ -484,6 +510,7 @@ def main() -> None:
                     result.setdefault("ai_recommended_copies", [])
                     result.setdefault("ai_copy_source", None)
                     result.setdefault("ai_validation_notes", [])
+                    result["ai_caption"] = {"status": "skipped", "notes": ["no caption text available"]}
                     print("[WARN] No caption text available. Skipping AI recommended copies.\n")
                 else:
                     # No try/except needed - orchestrator never raises
@@ -540,6 +567,32 @@ def main() -> None:
                         for note in ai_result["validation_notes"]:
                             print(f"  - {note}")
                     print()
+                    caption_input_for_ai = manual_caption_text if manual_caption_text else caption_text
+                    caption_payload = generate_caption_with_hashtags(
+                        ocr_text=ocr_caption,
+                        downloader_caption=caption_input_for_ai,
+                        workspace_dir=workspace_root,
+                        groq_api_key=groq_api_key,
+                        perplexity_api_key=perplexity_api_key or None,
+                        use_perplexity=bool(perplexity_api_key),
+                        existing_perplexity=ai_result.get("perplexity"),
+                        timeout=args.groq_timeout,
+                    )
+                    result["ai_caption"] = caption_payload
+                    caption_notes = caption_payload.get("notes") or []
+                    if caption_payload.get("status") == "success":
+                        location = caption_payload.get("file_path") or "(not saved)"
+                        print(f"[OK] AI caption saved to {location}")
+                    else:
+                        if caption_notes:
+                            print(f"[WARN] AI caption skipped: {'; '.join(caption_notes)}")
+                        else:
+                            print("[WARN] AI caption generation skipped (no output).")
+                    if caption_notes and caption_payload.get("status") == "success":
+                        print("[INFO] Caption generation notes:")
+                        for note in caption_notes:
+                            print(f"  - {note}")
+                    print()
 
 
             else:
@@ -547,6 +600,7 @@ def main() -> None:
                 result.setdefault("ai_recommended_copies", [])
                 result.setdefault("ai_copy_source", None)
                 result.setdefault("ai_validation_notes", [])
+                result.setdefault("ai_caption", {"status": "skipped", "notes": ["ai_copy_disabled"]})
 
         except Exception as exc:
             result = {

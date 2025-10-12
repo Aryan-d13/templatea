@@ -27,6 +27,7 @@ FILE_KEY_MAP: Dict[str, Path] = {
     "cropped": Path("01_detector/cropped.mp4"),
     "detector_status": Path("01_detector.status"),
     "ocr": Path("02_ocr/ocr.txt"),
+    "caption": Path("02_ocr/caption.txt"),
     "ai_copies": Path("02_ocr/ai_copies.json"),
     "gemini_report": Path("02_ocr/gemini_report.json"),
     "ocr_status": Path("02_ocr.status"),

@@ -17,12 +17,51 @@ Notes:
 """
 
 import argparse, subprocess, json, time, os, hashlib, shutil, sys, threading
+import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict
-# near top
-from api.template_registry import get_renderer_func, TemplateNotFound as TemplateRegistryError
+from typing import Optional, List, Dict, Tuple, Any
+from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler("orchestrator.log"),
+        logging.StreamHandler(),
+    ],
+)
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter("[orchestrator] %(levelname)s %(message)s"))
+    log_file = BASE_DIR / "orchestrator.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+if not logger.level or logger.level > logging.INFO:
+    logger.setLevel(logging.INFO)
+logger.propagate = False
+try:
+    from api.template_registry import (
+        get_renderer_func,
+        TemplateNotFound as TemplateRegistryError,
+        get_template_folder,
+    )
+except Exception:  # pragma: no cover - fallback for standalone usage
+    get_renderer_func = None  # type: ignore
+
+    class TemplateRegistryError(Exception):
+        pass
+
+    def get_template_folder(template_id: str):
+        raise TemplateRegistryError("template registry unavailable")
 from gemini_ocr_batch import generate_ai_one_liners
+from ai_hook_orchestrator_perplexity import generate_dual_text_pair
 
 import re
 _EMOJI_RE = re.compile(
@@ -38,6 +77,94 @@ _EMOJI_RE = re.compile(
 )
 
 _URL_SHORTCODE_RE = re.compile(r"(?:/p/|/reel/|/reels/|/tv/|/video/)([^/?#]+)")
+
+_TEMPLATE_CFG_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _load_template_config(template_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Read template.json for the given template id, with a tiny in-process cache."""
+    if not template_id:
+        return None
+    if template_id in _TEMPLATE_CFG_CACHE:
+        return _TEMPLATE_CFG_CACHE[template_id]
+    if get_template_folder is None:
+        return None
+    try:
+        folder = get_template_folder(template_id)
+    except Exception:
+        return None
+    cfg_path = folder / "template.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        _TEMPLATE_CFG_CACHE[template_id] = cfg
+        return cfg
+    except Exception:
+        return None
+
+
+def _template_text_flags(template_id: Optional[str]) -> Tuple[bool, bool]:
+    cfg = _load_template_config(template_id)
+    if not cfg:
+        return False, False
+    top_enabled = bool(cfg.get("top_text", {}).get("enabled"))
+    bottom_enabled = bool(cfg.get("bottom_text", {}).get("enabled"))
+    return top_enabled, bottom_enabled
+
+
+def _resolve_render_text_context(meta: Dict[str, Any], template_id: Optional[str], base_text: str) -> Dict[str, Any]:
+    """
+    Compute the effective texts and hash signature for rendering, given template capabilities.
+    base_text is assumed to be normalized for rendering.
+    """
+    top_enabled, bottom_enabled = _template_text_flags(template_id)
+    dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
+
+    def _clean(value: Optional[str]) -> str:
+        if not value:
+            return ""
+        return clean_text_for_render(normalize_dashes(value))
+
+    if top_enabled and bottom_enabled:
+        top_text = ""
+        bottom_text = ""
+        if isinstance(dual_meta, dict):
+            top_text = _clean(dual_meta.get("top_text"))
+            bottom_text = _clean(dual_meta.get("bottom_text"))
+        if not top_text:
+            top_text = base_text
+        if not bottom_text:
+            bottom_text = base_text
+    elif top_enabled:
+        top_text = base_text
+        bottom_text = ""
+    elif bottom_enabled:
+        top_text = ""
+        bottom_text = base_text
+    else:
+        top_text = ""
+        bottom_text = ""
+
+    if top_enabled or bottom_enabled:
+        hash_payload = json.dumps(
+            {
+                "text": base_text,
+                "top": top_text if top_enabled else "",
+                "bottom": bottom_text if bottom_enabled else "",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        text_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()
+    else:
+        text_hash = hashlib.sha256(base_text.encode("utf-8")).hexdigest() if base_text else "empty"
+
+    return {
+        "top_enabled": top_enabled,
+        "bottom_enabled": bottom_enabled,
+        "top_text": top_text if top_enabled else None,
+        "bottom_text": bottom_text if bottom_enabled else None,
+        "hash": text_hash,
+    }
 
 def clean_text_for_render(text: str) -> str:
     if not isinstance(text, str):
@@ -177,12 +304,16 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
     ocr_txt = ocr_dir / "ocr.txt"
     ai_json = ocr_dir / "ai_copies.json"
 
+    meta = read_meta(ws) or {}
+    template_id = meta.get("template_id")
+    top_enabled, bottom_enabled = _template_text_flags(template_id)
+
     if regen_ai_only:
         if ocr_txt.exists():
             try:
                 caption_text = normalize_dashes(ocr_txt.read_text(encoding="utf-8").strip())
             except Exception as exc:
-                print(f"[WARN] Failed to read cached OCR text: {exc}")
+                logger.warning("Failed to read cached OCR text: %s", exc)
                 caption_text = ""
         else:
             caption_text = ""
@@ -194,7 +325,7 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
                 try:
                     downloader_caption = normalize_dashes(raw_caption.read_text(encoding="utf-8-sig").strip())
                 except Exception as exc:
-                    print(f"[WARN] Failed to read raw caption {raw_caption}: {exc}")
+                    logger.warning("Failed to read raw caption %s: %s", raw_caption, exc)
 
             history_dir = ocr_dir / "history"
             try:
@@ -211,7 +342,7 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
             perplexity_key = os.getenv("PERPLEXITY_API_KEY", "")
             groq_key = os.getenv("GROQ_API_KEY", "")
             if not groq_key:
-                print("[WARN] GROQ_API_KEY missing; falling back to full OCR run.")
+                logger.warning("GROQ_API_KEY missing; falling back to full OCR run.")
             else:
                 try:
                     ai_result = generate_ai_one_liners(
@@ -241,9 +372,9 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
                     write_status(ws, "02_ocr", "success", extra={"mode": "ai_refresh"})
                     return True
                 except Exception as exc:
-                    print(f"[WARN] AI refresh failed, falling back to full OCR run: {exc}")
+                    logger.warning("AI refresh failed, falling back to full OCR run: %s", exc, exc_info=True)
         else:
-            print("[WARN] No cached OCR text found; running full OCR.")
+            logger.warning("No cached OCR text found; running full OCR.")
         regen_ai_only = False
 
     if ocr_txt.exists() or ai_json.exists():
@@ -352,6 +483,89 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
                             "source": source
                         })
 
+                    if top_enabled and bottom_enabled and template_id:
+                        dual_downloader_caption = (
+                            result.get("manual_caption")
+                            or result.get("ocr_caption")
+                            or ""
+                        )
+                        logger.info(
+                            "dual_text: generating overlay copy workspace=%s template=%s key_present=%s",
+                            ws.name,
+                            template_id,
+                            bool(os.getenv("GROQ_API_KEY")),
+                        )
+                        groq_key = os.getenv("GROQ_API_KEY", "")
+                        if groq_key:
+                            try:
+                                dual_result = generate_dual_text_pair(
+                                    groq_api_key=groq_key,
+                                    ocr_text=caption_text,
+                                    downloader_caption=dual_downloader_caption,
+                                    ai_one_liners=ai_copies_data,
+                                    temperature=0.6,
+                                    timeout=int(os.getenv("DUAL_TEXT_TIMEOUT", "60")),
+                                )
+                            except Exception as exc:
+                                logger.warning("dual_text: generation exception %s", exc, exc_info=True)
+                                dual_result = {
+                                    "status": "fallback_exception",
+                                    "top_text": caption_text,
+                                    "bottom_text": caption_text,
+                                    "source": "fallback_exception",
+                                    "notes": [f"error: {exc}"],
+                                }
+                        else:
+                            dual_result = {
+                                "status": "fallback_missing_key",
+                                "top_text": caption_text,
+                                "bottom_text": caption_text,
+                                "source": "fallback_missing_key",
+                                "notes": ["missing GROQ_API_KEY"],
+                            }
+                            logger.warning("dual_text: missing GROQ_API_KEY; using fallback payload")
+
+                        top_text_clean = clean_text_for_render(normalize_dashes(str(dual_result.get("top_text") or caption_text)))
+                        bottom_text_clean = clean_text_for_render(normalize_dashes(str(dual_result.get("bottom_text") or caption_text)))
+                        if not top_text_clean:
+                            top_text_clean = clean_text_for_render(normalize_dashes(caption_text))
+                        if not bottom_text_clean:
+                            bottom_text_clean = top_text_clean
+                        if top_text_clean == bottom_text_clean and bottom_text_clean:
+                            bottom_text_clean = clean_text_for_render(f"{bottom_text_clean} Stay tuned.")
+                        dual_notes = dual_result.get("notes")
+                        if isinstance(dual_notes, list):
+                            dual_notes_clean = [str(n) for n in dual_notes if str(n).strip()]
+                        elif dual_notes:
+                            dual_notes_clean = [str(dual_notes)]
+                        else:
+                            dual_notes_clean = []
+                        dual_hints = dual_result.get("perplexity_hints")
+                        if isinstance(dual_hints, list):
+                            dual_hints_clean = [str(h) for h in dual_hints if str(h).strip()]
+                        else:
+                            dual_hints_clean = None
+                        dual_payload = {
+                            "top_text": top_text_clean,
+                            "bottom_text": bottom_text_clean,
+                            "source": dual_result.get("source") or "groq_dual_text",
+                            "status": dual_result.get("status") or "success",
+                            "notes": dual_notes_clean,
+                            "perplexity_hints": dual_hints_clean,
+                            "ts": ts(),
+                        }
+                        logger.info(
+                            "dual_text: result status=%s source=%s top=%r bottom=%r notes=%s",
+                            dual_payload["status"],
+                            dual_payload["source"],
+                            dual_payload["top_text"],
+                            dual_payload["bottom_text"],
+                            dual_payload["notes"],
+                        )
+                        meta = read_meta(ws) or {}
+                        meta["dual_text"] = dual_payload
+                        write_meta(ws, meta)
+
                     # If no AI copies but we have caption, create a minimal fallback
                     if not ai_copies_data and caption_text:
                         ai_copies_data.append({"id": "fallback-1", "text": caption_text[:140], "source": "ocr_fallback"})
@@ -370,6 +584,17 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
                 with open(ocr_txt, "w", encoding="utf8") as f:
                     f.write(text)
                 ac = [{"id": "fallback-1", "text": text[:140] if len(text) > 140 else text, "source": "raw_caption_fallback"}]
+                if top_enabled and bottom_enabled and template_id:
+                    fallback_text = clean_text_for_render(text)
+                    dual_payload = {
+                        "top_text": fallback_text,
+                        "bottom_text": fallback_text,
+                        "source": "raw_caption_fallback",
+                        "ts": ts(),
+                    }
+                    meta = read_meta(ws) or {}
+                    meta["dual_text"] = dual_payload
+                    write_meta(ws, meta)
                 with open(ai_json, "w", encoding="utf8") as f:
                     json.dump(ac, f, indent=2)
                 write_status(ws, "02_ocr", "fallback_caption", retries=retries)
@@ -573,6 +798,37 @@ def ensure_choice(ws: Path, auto=False, force_refresh: bool = False):
     return False
 
 # --- in orchestrator.py ---
+
+
+def _load_dual_text_sources(ws: Path, base_text: str) -> tuple[str, str, list]:
+    """Fetch OCR text, downloader caption, and AI one-liners for dual text generation."""
+    ocr_text = base_text
+    downloader_caption = ""
+    ai_candidates: List[str | Dict[str, Any]] = []
+    try:
+        ocr_path = ws / "02_ocr" / "ocr.txt"
+        if ocr_path.exists():
+            ocr_text = normalize_dashes(ocr_path.read_text(encoding="utf-8-sig").strip()) or base_text
+    except Exception as exc:
+        logger.warning("dual_text: failed reading ocr.txt: %s", exc)
+
+    try:
+        caption_path = ws / "00_raw" / "raw_caption.txt"
+        if caption_path.exists():
+            downloader_caption = normalize_dashes(caption_path.read_text(encoding="utf-8-sig").strip())
+    except Exception as exc:
+        logger.warning("dual_text: failed reading raw_caption.txt: %s", exc)
+
+    try:
+        ai_path = ws / "02_ocr" / "ai_copies.json"
+        if ai_path.exists():
+            data = json.loads(ai_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                ai_candidates = data
+    except Exception as exc:
+        logger.warning("dual_text: failed reading ai_copies.json: %s", exc)
+
+    return ocr_text, downloader_caption, ai_candidates
 def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bool = False):
     render_dir = ws / "04_render"
     render_dir.mkdir(exist_ok=True)
@@ -589,12 +845,59 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
         write_status(ws, "04_render", "failed", error="choice missing")
         return False
 
-    meta = read_meta(ws)
+    meta = read_meta(ws) or {}
     effective_template_id = template_id or meta.get("template_id")
+    top_enabled, bottom_enabled = _template_text_flags(effective_template_id)
     template_options = dict(meta.get("template_options", {}))
     raw_text = normalize_dashes(choice.read_text(encoding="utf-8-sig"))
+
     text_value = clean_text_for_render(raw_text)
-    text_hash = hashlib.sha256(text_value.encode("utf-8")).hexdigest() if text_value else "empty"
+    
+    dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
+    if top_enabled and bottom_enabled:
+        need_refresh = True
+        if isinstance(dual_meta, dict):
+            top_ready = bool(dual_meta.get("top_text"))
+            bottom_ready = bool(dual_meta.get("bottom_text"))
+            source_flag = (dual_meta.get("source") or "").lower()
+            status_flag = (dual_meta.get("status") or "").lower()
+            if top_ready and bottom_ready and not source_flag.startswith("fallback") and status_flag == "success":
+                need_refresh = False
+        if need_refresh:
+            ocr_text, downloader_caption, ai_candidates_raw = _load_dual_text_sources(ws, text_value)
+            dual_result = generate_dual_text_pair(
+                groq_api_key=os.getenv("GROQ_API_KEY", ""),
+                ocr_text=ocr_text,
+                downloader_caption=downloader_caption,
+                ai_one_liners=ai_candidates_raw,
+                perplexity_payload=None,
+                temperature=0.6,
+                timeout=int(os.getenv("DUAL_TEXT_TIMEOUT", "60")),
+            )
+            dual_top = clean_text_for_render(normalize_dashes(dual_result.get("top_text") or text_value))
+            dual_bottom = clean_text_for_render(normalize_dashes(dual_result.get("bottom_text") or text_value))
+            dual_notes = dual_result.get("notes") or []
+            if not isinstance(dual_notes, list):
+                dual_notes = [str(dual_notes)]
+            if dual_top == dual_bottom and dual_bottom:
+                dual_bottom = clean_text_for_render(f"{dual_bottom} Stay tuned.")
+                dual_notes.append("bottom text adjusted to avoid duplication")
+            dual_meta = {
+                "top_text": dual_top,
+                "bottom_text": dual_bottom,
+                "source": dual_result.get("source"),
+                "status": dual_result.get("status"),
+                "notes": dual_notes,
+                "ts": ts(),
+            }
+            meta["dual_text"] = dual_meta
+            write_meta(ws, meta)
+    else:
+        dual_meta = {}
+    render_ctx = _resolve_render_text_context(meta, effective_template_id, text_value)
+    text_hash = render_ctx["hash"]
+    top_text_for_renderer = render_ctx["top_text"]
+    bottom_text_for_renderer = render_ctx["bottom_text"]
 
     template_key = effective_template_id or "legacy_default"
 
@@ -626,12 +929,12 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             pass
 
     # inside ensure_render(...) in orchestrator
-    def record_success(source_path: Path, selected_text: str, selected_hash: str) -> bool:  
+    def record_success(source_path: Path, selected_text: str, selected_hash: str, top_text: Optional[str], bottom_text: Optional[str]) -> bool:  
         if not source_path.exists():
             return False
         rel = source_path.relative_to(ws)
         now_ts = ts()
-        renders_meta[template_key] = {
+        entry = {
             "path": str(rel),
             "options_signature": signature,
             "template_options": template_options,
@@ -639,7 +942,12 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             "text": selected_text,
             "ts": now_ts,
         }
-        meta["render"] = {
+        if top_text is not None:
+            entry["top_text"] = top_text
+        if bottom_text is not None:
+            entry["bottom_text"] = bottom_text
+        renders_meta[template_key] = entry
+        meta_render = {
             "template_id": effective_template_id,
             "template_options": template_options,
             "path": str(rel),
@@ -647,6 +955,11 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             "text": selected_text,
             "ts": now_ts,
         }
+        if top_text is not None:
+            meta_render["top_text"] = top_text
+        if bottom_text is not None:
+            meta_render["bottom_text"] = bottom_text
+        meta["render"] = meta_render
         write_meta(ws, meta)
         write_status(ws, "04_render", "success")
         return True
@@ -658,7 +971,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
         and existing_entry.get("options_signature") == signature
         and existing_entry.get("text_hash") == text_hash
     ):
-        return record_success(existing_path, text_value, text_hash)
+        return record_success(existing_path, text_value, text_hash, top_text_for_renderer, bottom_text_for_renderer)
 
     registry_renderer_factory = None
     if effective_template_id:
@@ -670,12 +983,37 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             except Exception:
                 registry_renderer_factory = None
 
+    # A fresh render is required; mark status accordingly so downstream consumers wait for completion.
+    write_status(ws, "04_render", "rendering", extra={"template": template_key})
+
     if effective_template_id and registry_renderer_factory:
         try:
             renderer = registry_renderer_factory(effective_template_id)
-            ok = renderer(str(cropped), str(template_final), text_value, template_options)
+            logger.info("render call workspace=%s template=%s top=%r bottom=%r", ws.name, effective_template_id, top_text_for_renderer, bottom_text_for_renderer)
+            render_kwargs: Dict[str, Any] = {}
+            if top_text_for_renderer is not None:
+                render_kwargs["top_text"] = top_text_for_renderer
+            if bottom_text_for_renderer is not None:
+                render_kwargs["bottom_text"] = bottom_text_for_renderer
+            try:
+                if render_kwargs:
+                    ok = renderer(
+                        str(cropped),
+                        str(template_final),
+                        text_value,
+                        template_options,
+                        **render_kwargs,
+                    )
+                else:
+                    ok = renderer(str(cropped), str(template_final), text_value, template_options)
+            except TypeError:
+                ok = renderer(str(cropped), str(template_final), text_value, template_options)
+            except Exception as exc:
+                logger.error("Renderer raised exception: %s", exc, exc_info=True)
+                write_status(ws, "04_render", "failed", error=str(exc))
+                return False
             if ok is None or ok is True:
-                if record_success(template_final, text_value, text_hash):
+                if record_success(template_final, text_value, text_hash, top_text_for_renderer, bottom_text_for_renderer):
                     return True
                 write_status(ws, "04_render", "failed", error="rendered file missing")
                 return False
@@ -705,7 +1043,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
         from marketingspots_template import process_marketingspots_template
         ok = process_marketingspots_template(str(cropped), str(template_final), text_value)
         if ok is None or ok is True:
-            if record_success(template_final, text_value, text_hash):
+            if record_success(template_final, text_value, text_hash, top_text_for_renderer, bottom_text_for_renderer):
                 return True
             write_status(ws, "04_render", "failed", error="rendered file missing")
             return False
@@ -715,7 +1053,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
         cmd = ["python", "run_for_spots.py", str(cropped), str(template_final), str(choice)]
         code, out, err = run_cmd(cmd, timeout=300)
         if code == 0 and template_final.exists():
-            if record_success(template_final, text_value, text_hash):
+            if record_success(template_final, text_value, text_hash, top_text_for_renderer, bottom_text_for_renderer):
                 return True
             write_status(ws, "04_render", "failed", error="rendered file missing")
             return False
@@ -802,10 +1140,12 @@ def process_single_workspace(ws: Path, auto: bool = False, template_id: Optional
             except Exception:
                 choice_text_clean = ""
 
+        meta = read_meta(ws) or meta
         template_key = effective_template or "legacy_default"
         previous_entry = (meta.get("renders") or {}).get(template_key, {})
         previous_hash = previous_entry.get("text_hash") if previous_entry else None
-        desired_hash = hashlib.sha256(choice_text_clean.encode("utf-8")).hexdigest() if choice_text_clean else "empty"
+        render_ctx_preview = _resolve_render_text_context(meta, effective_template, choice_text_clean)
+        desired_hash = render_ctx_preview["hash"]
         force_render = reuse_existing or previous_hash != desired_hash
 
         if detector_done.wait(0):
