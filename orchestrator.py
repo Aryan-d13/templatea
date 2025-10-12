@@ -23,6 +23,15 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple, Any
 from dotenv import load_dotenv
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler("orchestrator.log"),
+        logging.StreamHandler(),
+    ],
+)
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 logger = logging.getLogger(__name__)
@@ -786,6 +795,37 @@ def ensure_choice(ws: Path, auto=False, force_refresh: bool = False):
     return False
 
 # --- in orchestrator.py ---
+
+
+def _load_dual_text_sources(ws: Path, base_text: str) -> tuple[str, str, list]:
+    """Fetch OCR text, downloader caption, and AI one-liners for dual text generation."""
+    ocr_text = base_text
+    downloader_caption = ""
+    ai_candidates: List[str | Dict[str, Any]] = []
+    try:
+        ocr_path = ws / "02_ocr" / "ocr.txt"
+        if ocr_path.exists():
+            ocr_text = normalize_dashes(ocr_path.read_text(encoding="utf-8-sig").strip()) or base_text
+    except Exception as exc:
+        logger.warning("dual_text: failed reading ocr.txt: %s", exc)
+
+    try:
+        caption_path = ws / "00_raw" / "raw_caption.txt"
+        if caption_path.exists():
+            downloader_caption = normalize_dashes(caption_path.read_text(encoding="utf-8-sig").strip())
+    except Exception as exc:
+        logger.warning("dual_text: failed reading raw_caption.txt: %s", exc)
+
+    try:
+        ai_path = ws / "02_ocr" / "ai_copies.json"
+        if ai_path.exists():
+            data = json.loads(ai_path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                ai_candidates = data
+    except Exception as exc:
+        logger.warning("dual_text: failed reading ai_copies.json: %s", exc)
+
+    return ocr_text, downloader_caption, ai_candidates
 def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bool = False):
     render_dir = ws / "04_render"
     render_dir.mkdir(exist_ok=True)
@@ -804,9 +844,53 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
 
     meta = read_meta(ws) or {}
     effective_template_id = template_id or meta.get("template_id")
+    top_enabled, bottom_enabled = _template_text_flags(effective_template_id)
     template_options = dict(meta.get("template_options", {}))
     raw_text = normalize_dashes(choice.read_text(encoding="utf-8-sig"))
+
     text_value = clean_text_for_render(raw_text)
+    
+    dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
+    if top_enabled and bottom_enabled:
+        need_refresh = True
+        if isinstance(dual_meta, dict):
+            top_ready = bool(dual_meta.get("top_text"))
+            bottom_ready = bool(dual_meta.get("bottom_text"))
+            source_flag = (dual_meta.get("source") or "").lower()
+            status_flag = (dual_meta.get("status") or "").lower()
+            if top_ready and bottom_ready and not source_flag.startswith("fallback") and status_flag == "success":
+                need_refresh = False
+        if need_refresh:
+            ocr_text, downloader_caption, ai_candidates_raw = _load_dual_text_sources(ws, text_value)
+            dual_result = generate_dual_text_pair(
+                groq_api_key=os.getenv("GROQ_API_KEY", ""),
+                ocr_text=ocr_text,
+                downloader_caption=downloader_caption,
+                ai_one_liners=ai_candidates_raw,
+                perplexity_payload=None,
+                temperature=0.6,
+                timeout=int(os.getenv("DUAL_TEXT_TIMEOUT", "60")),
+            )
+            dual_top = clean_text_for_render(normalize_dashes(dual_result.get("top_text") or text_value))
+            dual_bottom = clean_text_for_render(normalize_dashes(dual_result.get("bottom_text") or text_value))
+            dual_notes = dual_result.get("notes") or []
+            if not isinstance(dual_notes, list):
+                dual_notes = [str(dual_notes)]
+            if dual_top == dual_bottom and dual_bottom:
+                dual_bottom = clean_text_for_render(f"{dual_bottom} Stay tuned.")
+                dual_notes.append("bottom text adjusted to avoid duplication")
+            dual_meta = {
+                "top_text": dual_top,
+                "bottom_text": dual_bottom,
+                "source": dual_result.get("source"),
+                "status": dual_result.get("status"),
+                "notes": dual_notes,
+                "ts": ts(),
+            }
+            meta["dual_text"] = dual_meta
+            write_meta(ws, meta)
+    else:
+        dual_meta = {}
     render_ctx = _resolve_render_text_context(meta, effective_template_id, text_value)
     text_hash = render_ctx["hash"]
     top_text_for_renderer = render_ctx["top_text"]
