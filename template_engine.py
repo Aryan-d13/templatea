@@ -10,6 +10,8 @@ Enhanced with:
 - Header image support
 - Color word highlighting
 - Advanced logo positioning with rotation
+- Logo overlay AFTER video composite (fixed rendering order)
+- Production-grade encoding with moov atom optimization
 """
 
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ import logging
 from typing import Tuple, List, Set, Optional, Dict
 from dotenv import load_dotenv
 import os
+import shutil
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -47,6 +50,23 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
+
+# Production-grade encoding parameters for universal compatibility
+PRODUCTION_VIDEO_ENCODING = (
+    "-c:v libx264 "
+    "-crf 18 "
+    "-preset medium "  # Good balance of speed/quality
+    "-profile:v high "  # Better compression
+    "-level 4.2 "  # Wide device compatibility
+    "-pix_fmt yuv420p "  # Universal color format
+    "-movflags +faststart"  # Put moov atom at start for web streaming
+)
+
+PRODUCTION_AUDIO_ENCODING = (
+    "-c:a aac "
+    "-b:a 192k "  # High quality audio
+    "-ar 44100"  # Standard sample rate
+)
 
 # Small util to call ffprobe
 def probe_video_size(path: str) -> Tuple[int,int]:
@@ -459,6 +479,7 @@ def probe_duration(path):
 def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_video_path: str, cfg: dict):
     """
     Fixed compositing that explicitly limits canvas duration to match video duration.
+    Uses production-grade encoding settings for universal compatibility.
     """
     import tempfile, shlex, subprocess, os, math, shutil
 
@@ -478,10 +499,10 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
 
     base_opts = "-hide_banner -loglevel warning"
 
-    # 1) scale input preserving aspect ratio
+    # 1) scale input preserving aspect ratio with production encoding
     cmd_scale = (
         f"ffmpeg -y {base_opts} -i {shlex.quote(input_video_path)} "
-        f"-vf scale={vw}:-2 -c:v libx264 -crf 18 -preset veryfast -c:a copy {shlex.quote(tmp_scaled.name)}"
+        f"-vf scale={vw}:-2 {PRODUCTION_VIDEO_ENCODING} -c:a copy {shlex.quote(tmp_scaled.name)}"
     )
     subprocess.run(shlex.split(cmd_scale), check=True)
 
@@ -505,13 +526,13 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
     tmp_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp_with_audio.close()
 
-    # 2) Overlay with explicit duration limits
+    # 2) Overlay with explicit duration limits and production encoding
     cmd_overlay = (
         f'ffmpeg -y {base_opts} '
         f'-loop 1 -t {video_duration} -i {shlex.quote(canvas_path)} '
         f'-i {shlex.quote(tmp_scaled.name)} '
         f'-filter_complex "[0:v][1:v]overlay={ox}:{oy}:format=yuv420:shortest=1[outv]" '
-        f'-map "[outv]" -map 1:a? -c:v libx264 -crf 18 -preset veryfast -c:a aac '
+        f'-map "[outv]" -map 1:a? {PRODUCTION_VIDEO_ENCODING} {PRODUCTION_AUDIO_ENCODING} '
         f'-t {video_duration} {shlex.quote(tmp_with_audio.name)}'
     )
 
@@ -715,22 +736,32 @@ class TemplateEngine:
             if header_cfg.get("enabled", False):
                 self._render_header(image, root, header_cfg, canvas_w, top_text_cfg, vx, vy)
 
-        # Logo with NEW positioning options
-        logo_cfg = cfg.get("logo", {})
-        if logo_cfg.get("enabled", True):
-            self._render_logo(image, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh)
-
-        # Save canvas to temp file
+        # Save canvas to temp file (WITHOUT logo yet - logo will be added after video composite)
         tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
         tmp_canvas.close()
         image.save(tmp_canvas.name)
 
         # Composite canvas and video
-        composite_canvas_and_video(tmp_canvas.name, self.request.input_video_path, self.request.output_video_path, cfg)
+        tmp_video_with_canvas = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_video_with_canvas.close()
+        composite_canvas_and_video(tmp_canvas.name, self.request.input_video_path, tmp_video_with_canvas.name, cfg)
 
-        # Cleanup
+        # NOW add logo on top of the composited video (if enabled)
+        logo_cfg = cfg.get("logo", {})
+        if logo_cfg.get("enabled", True):
+            self._add_logo_to_final_video(tmp_video_with_canvas.name, self.request.output_video_path, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh)
+        else:
+            # No logo, just move the temp file to final output
+            shutil.move(tmp_video_with_canvas.name, self.request.output_video_path)
+
+        # Cleanup temp files
         try:
             os.unlink(tmp_canvas.name)
+        except Exception:
+            pass
+        try:
+            if logo_cfg.get("enabled", True):
+                os.unlink(tmp_video_with_canvas.name)
         except Exception:
             pass
 
@@ -909,13 +940,16 @@ class TemplateEngine:
         except Exception as e:
             logger.warning(f"Failed to render header: {e}")
 
-    def _render_logo(self, image, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh):
-        """Render logo with advanced positioning and rotation."""
+    def _add_logo_to_final_video(self, input_video_path, output_video_path, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh):
+        """Add logo overlay on top of the final composited video using FFmpeg."""
         logo_path = root / logo_cfg.get("path", "")
         if not logo_path.exists():
+            logger.warning(f"Logo file not found at {logo_path}")
+            shutil.move(input_video_path, output_video_path)
             return
 
         try:
+            # Load and process logo
             logo = Image.open(logo_path).convert("RGBA")
 
             sz = logo_cfg.get("size", {})
@@ -940,29 +974,25 @@ class TemplateEngine:
 
             logo = logo.resize((target_w, target_h), Image.LANCZOS)
 
-            # NEW: Rotation support
+            # Rotation support
             rotation = logo_cfg.get("rotation", 0)
             if rotation != 0:
                 logo = logo.rotate(rotation, expand=True, resample=Image.BICUBIC)
-                # Update dimensions after rotation
                 target_w, target_h = logo.size
 
-            # NEW: Position modes
-            position_mode = logo_cfg.get("position_mode", "canvas")  # "canvas" or "video"
+            # Calculate position
+            position_mode = logo_cfg.get("position_mode", "canvas")
             
             if position_mode == "video":
-                # Position relative to video
                 video_relative = logo_cfg.get("video_relative", {})
                 offset_x = int(video_relative.get("x", 0))
                 offset_y = int(video_relative.get("y", 0))
                 lx = vx + offset_x
                 ly = vy + offset_y
             else:
-                # Traditional canvas positioning
                 pos = logo_cfg.get("position", "top-right")
                 margin = int(logo_cfg.get("margin", 36))
 
-                # NEW: Support for x, y coordinates
                 if isinstance(pos, dict):
                     lx = int(pos.get("x", margin))
                     ly = int(pos.get("y", margin))
@@ -979,9 +1009,37 @@ class TemplateEngine:
                     lx = margin
                     ly = canvas_h - target_h - margin
 
-            image.paste(logo, (lx, ly), logo)
+            # Save logo to temporary file
+            tmp_logo = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp_logo.close()
+            logo.save(tmp_logo.name)
+
+            logger.debug(f"Logo overlay: position=({lx}, {ly}), size=({target_w}, {target_h})")
+
+            # Use FFmpeg to overlay logo on video with production encoding
+            base_opts = "-hide_banner -loglevel warning"
+            cmd_overlay = (
+                f"ffmpeg -y {base_opts} "
+                f"-i {shlex.quote(input_video_path)} "
+                f"-i {shlex.quote(tmp_logo.name)} "
+                f'-filter_complex "[0:v][1:v]overlay={lx}:{ly}:format=auto[outv]" '
+                f'-map "[outv]" -map 0:a? {PRODUCTION_VIDEO_ENCODING} -c:a copy '
+                f'{shlex.quote(output_video_path)}'
+            )
+
+            logger.debug(f"FFmpeg logo overlay command: {cmd_overlay}")
+            subprocess.run(shlex.split(cmd_overlay), check=True)
+
+            # Cleanup temp logo
+            try:
+                os.unlink(tmp_logo.name)
+            except Exception:
+                pass
+
         except Exception as e:
-            logger.warning(f"Failed to render logo: {e}")
+            logger.error(f"Failed to add logo to final video: {e}")
+            # Fallback: just copy the input to output
+            shutil.move(input_video_path, output_video_path)
 
 
 def render_with_template(input_video_path: str, output_video_path: str, text: str, template_root: str, overrides: dict = None):

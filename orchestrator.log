@@ -1,2 +1,32 @@
 2025-10-12 20:37:23,589 templates.advanced_template INFO advanced_template render call top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
 2025-10-12 20:42:13,261 templates.advanced_template INFO advanced_template render call top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 21:05:07,025 __main__ INFO render call workspace=DPoQtyUjMK2 template=advanced_template top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 21:05:07,025 templates.advanced_template INFO advanced_template render call top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 21:16:43,091 __main__ INFO render call workspace=DPoQtyUjMK2 template=advanced_template top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 21:16:43,091 templates.advanced_template INFO advanced_template render call top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 21:27:44,728 __main__ INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 21:27:45,416 __main__ INFO dual_text: result status=success source=groq_dual_text top="Mom's Inner Beauty Is Timeless" bottom='Remind her of her worth with a thoughtful gift today' notes=[]
+2025-10-12 21:28:17,466 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 21:28:20,791 orchestrator INFO dual_text: result status=success source=groq_dual_text top="Mom's Journey to Rediscover Her Beauty" bottom='Transforming lives from messy to magical every day inside' notes=[]
+2025-10-12 21:28:20,825 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="Mom's Journey to Rediscover Her Beauty" bottom='Transforming lives from messy to magical every day inside'
+2025-10-12 21:28:20,826 templates.advanced_template INFO advanced_template render call top="Mom's Journey to Rediscover Her Beauty" bottom='Transforming lives from messy to magical every day inside'
+2025-10-12 21:55:05,021 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 21:55:06,323 orchestrator INFO dual_text: result status=success source=groq_dual_text top="Mom's secret ingredient: love and chaos" bottom='Embracing the messy house as a masterpiece of imperfection daily' notes=[]
+2025-10-12 21:55:06,349 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="Mom's secret ingredient: love and chaos" bottom='Embracing the messy house as a masterpiece of imperfection daily'
+2025-10-12 21:55:06,349 templates.advanced_template INFO advanced_template render call top="Mom's secret ingredient: love and chaos" bottom='Embracing the messy house as a masterpiece of imperfection daily'
+2025-10-12 22:04:07,041 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id LOM --emit-json-workspace D:\Temp\tmphnuom1gt.json
+2025-10-12 22:04:21,588 api.tasks INFO Cleared render cache for workspace DLpUZRqNUEu
+2025-10-12 22:04:37,219 orchestrator INFO render call workspace=DLpUZRqNUEu template=LOM top=None bottom=None
+2025-10-12 22:07:55,697 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id advanced_template --emit-json-workspace D:\Temp\tmp2mgzsnrb.json
+2025-10-12 22:08:20,008 api.tasks INFO Cleared render cache for workspace DLpUZRqNUEu
+2025-10-12 22:08:43,918 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:08:44,551 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Mom wins at messy buns and broken dreams' bottom='Celebrate the imperfect moments that make motherhood beautiful and relatable too' notes=[]
+2025-10-12 22:08:44,583 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top='Mom wins at messy buns and broken dreams' bottom='Celebrate the imperfect moments that make motherhood beautiful and relatable too'
+2025-10-12 22:08:44,583 templates.advanced_template INFO advanced_template render call top='Mom wins at messy buns and broken dreams' bottom='Celebrate the imperfect moments that make motherhood beautiful and relatable too'
+2025-10-12 22:11:06,963 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id advanced_template --emit-json-workspace D:\Temp\tmpbxwiyfwb.json
+2025-10-12 22:11:23,059 api.tasks INFO Cleared render cache for workspace DLpUZRqNUEu
+2025-10-12 22:11:44,669 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:11:45,632 orchestrator INFO dual_text: result status=success source=groq_dual_text top="You're a mom, and you're doing better" bottom="than you think, and that's something to be proud of always" notes=[]
+2025-10-12 22:11:45,657 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="You're a mom, and you're doing better" bottom="than you think, and that's something to be proud of always"
+2025-10-12 22:11:45,657 templates.advanced_template INFO advanced_template render call top="You're a mom, and you're doing better" bottom="than you think, and that's something to be proud of always"
+2025-10-12 22:13:33,138 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id marketing_spots --emit-json-workspace D:\Temp\tmp2r5cg0os.json

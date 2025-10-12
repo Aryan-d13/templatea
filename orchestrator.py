@@ -36,13 +36,16 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 logger = logging.getLogger(__name__)
 if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("[orchestrator] %(levelname)s %(message)s"))
-    logger.addHandler(handler)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(logging.Formatter("[orchestrator] %(levelname)s %(message)s"))
+    log_file = BASE_DIR / "orchestrator.log"
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
 if not logger.level or logger.level > logging.INFO:
     logger.setLevel(logging.INFO)
 logger.propagate = False
-logging.basicConfig(level=logging.INFO)
 try:
     from api.template_registry import (
         get_renderer_func,

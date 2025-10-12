@@ -73,8 +73,8 @@
     },
     "position_mode": "video",
     "video_relative": {
-      "x": 10,
-      "y": 10
+      "x": 12,
+      "y": 6
     }
   },
   "renderer": {
