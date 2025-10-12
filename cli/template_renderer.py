@@ -3,9 +3,20 @@
 Command-line entrypoint for the template rendering engine.
 
 Examples:
+    # Basic usage with single text
     python cli/template_renderer.py --input input.mp4 --output out.mp4 --text "Hello world"
+    
+    # With choice file
     python cli/template_renderer.py --input in.mp4 --output out.mp4 --choice-file workspace/03_choice/choice.txt --template-root templates/clean_ad
+    
+    # With overrides
     python cli/template_renderer.py --input in.mp4 --output out.mp4 --text "Ad copy" --override text.color="#ff00ff"
+    
+    # NEW: Dual text support
+    python cli/template_renderer.py --input in.mp4 --output out.mp4 --top-text "HEADLINE" --bottom-text "Subtext" --template-root templates/dual_text
+    
+    # NEW: Mixed (top different, bottom from file)
+    python cli/template_renderer.py --input in.mp4 --output out.mp4 --top-text "Custom Top" --choice-file choice.txt --template-root templates/dual_text
 """
 
 from __future__ import annotations
@@ -69,17 +80,50 @@ def _format_preview(request: TemplateRenderRequest, overrides: Dict[str, Any]) -
         "output": request.output_video_path,
         "template_root": request.template_root,
         "text": request.text,
+        "top_text": request.top_text,
+        "bottom_text": request.bottom_text,
         "overrides": overrides,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Render a video using a Templatea template.")
+    parser = argparse.ArgumentParser(
+        description="Render a video using a template.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Single text (backward compatible)
+  %(prog)s --input video.mp4 --output out.mp4 --text "Hello World"
+  
+  # Dual text with different content
+  %(prog)s --input video.mp4 --output out.mp4 --top-text "HEADLINE" --bottom-text "Subtext"
+  
+  # Top text custom, bottom from file
+  %(prog)s --input video.mp4 --output out.mp4 --top-text "SAMSUNG" --choice-file text.txt
+  
+  # Both from same file
+  %(prog)s --input video.mp4 --output out.mp4 --choice-file text.txt
+  
+  # With template overrides
+  %(prog)s --input video.mp4 --output out.mp4 --text "Hello" --override top_text.color="#ff0000"
+        """
+    )
+    
+    # Required arguments
     parser.add_argument("--input", required=True, dest="input_video", help="Source video to composite.")
     parser.add_argument("--output", required=True, dest="output_video", help="Destination MP4 path.")
-    parser.add_argument("--text", help="Caption/heading text to render.")
-    parser.add_argument("--choice-file", type=Path, help="Path to a text file containing caption content.")
+    
+    # Text input options (mutually exclusive groups handled in validation)
+    text_group = parser.add_argument_group('text input options')
+    text_group.add_argument("--text", help="Default text (used for both top/bottom if not specified separately).")
+    text_group.add_argument("--choice-file", type=Path, help="Path to text file (used as fallback if top/bottom not specified).")
+    text_group.add_argument("--top-text", dest="top_text", help="Specific text for top_text block.")
+    text_group.add_argument("--bottom-text", dest="bottom_text", help="Specific text for bottom_text block.")
+    text_group.add_argument("--top-choice-file", type=Path, dest="top_choice_file", help="Text file for top_text block.")
+    text_group.add_argument("--bottom-choice-file", type=Path, dest="bottom_choice_file", help="Text file for bottom_text block.")
+    
+    # Template and overrides
     parser.add_argument(
         "--template-root",
         default=str(DEFAULT_TEMPLATE_DIR),
@@ -89,7 +133,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--override",
         action="append",
         default=[],
-        help="Shallow template override as key=value (supports dotted keys). Repeat for multiple overrides.",
+        help="Template override as key=value (supports dotted keys). Repeat for multiple overrides.",
     )
     parser.add_argument(
         "--dry-run",
@@ -107,7 +151,47 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
     output_path = Path(args.output_video)
     template_root = Path(args.template_root).resolve()
     overrides = _collect_overrides(args.override)
-    text_value = _resolve_text(args.text, args.choice_file)
+
+    # Resolve text inputs with priority system
+    # Priority: specific text > specific choice file > general text > general choice file
+    
+    # Default/fallback text
+    default_text = None
+    if args.choice_file:
+        try:
+            default_text = args.choice_file.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            parser.error(f"Choice file not found: {args.choice_file}")
+    elif args.text:
+        default_text = args.text
+    
+    # Top text
+    top_text = None
+    if args.top_choice_file:
+        try:
+            top_text = args.top_choice_file.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            parser.error(f"Top choice file not found: {args.top_choice_file}")
+    elif args.top_text:
+        top_text = args.top_text
+    
+    # Bottom text
+    bottom_text = None
+    if args.bottom_choice_file:
+        try:
+            bottom_text = args.bottom_choice_file.read_text(encoding="utf-8-sig").strip()
+        except FileNotFoundError:
+            parser.error(f"Bottom choice file not found: {args.bottom_choice_file}")
+    elif args.bottom_text:
+        bottom_text = args.bottom_text
+    
+    # Validation: At least one text source must be provided
+    if not any([default_text, top_text, bottom_text]):
+        parser.error("At least one text source required: --text, --choice-file, --top-text, --bottom-text, --top-choice-file, or --bottom-choice-file")
+    
+    # If no default text but have specific texts, use one as fallback
+    if not default_text:
+        default_text = top_text or bottom_text or ""
 
     if not input_path.exists() and not args.dry_run:
         parser.error(f"Input video not found: {input_path}")
@@ -120,9 +204,11 @@ def run_cli(argv: Optional[List[str]] = None) -> int:
     request = TemplateRenderRequest(
         input_video_path=str(input_path),
         output_video_path=str(output_path),
-        text=text_value,
+        text=default_text,
         template_root=str(template_root),
         overrides=overrides or None,
+        top_text=top_text,
+        bottom_text=bottom_text,
     )
 
     if args.dry_run:

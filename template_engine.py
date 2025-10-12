@@ -3,6 +3,13 @@ template_engine.py
 A modular template renderer that uses a template.json and assets folder.
 Works with PIL + ffmpeg subprocess. Designed to be a drop-in helper
 for process_marketingspots_template in marketingspots_template.py.
+
+Enhanced with:
+- Dual text system (top_text, bottom_text)
+- Video-relative positioning
+- Header image support
+- Color word highlighting
+- Advanced logo positioning with rotation
 """
 
 from dataclasses import dataclass
@@ -145,6 +152,10 @@ def apply_text_casing(text: str, mode: Optional[str]) -> str:
         return text
 
     normalized = (mode or "original").lower()
+
+    # NEW: Handle "none" to preserve original text
+    if normalized == "none":
+        return text
 
     if normalized in {"upper", "uppercase", "all_caps", "caps"}:
         return text.upper()
@@ -339,7 +350,6 @@ def _call_groq_highlight_phrase(text: str, n: int, api_key: str, model: str = "l
         "RULES:\n"
         "1. Select exactly 1 consecutive words from the hook copy\n"
         "2. Choose word that is most attention-grabbing or emotionally impactful\n"
-        # "3. The selected words must appear in sequence in the original text\n"
         "4. Return ONLY the selected word as it appears in the text\n"
         "5. No explanations, no formatting, no quotation marks, no additional text\n\n"
         "OUTPUT:\n"
@@ -464,23 +474,21 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
     )
     subprocess.run(shlex.split(cmd_scale), check=True)
 
-    # compute overlay position
+    # compute overlay position using new positioning
     canvas_h = cfg.get("canvas", {}).get("height", 1920)
     vw_actual, vh_actual = probe_video_size(tmp_scaled.name)
-    vertical_align = template_video_cfg.get("vertical_align", "center")
-    if vertical_align == "center":
-        ox = (canvas_w - vw_actual)//2
-        oy = (canvas_h - vh_actual)//2
-    elif vertical_align == "top":
-        ox = (canvas_w - vw_actual)//2
-        oy = 0
-    elif vertical_align == "bottom":
-        ox = (canvas_w - vw_actual)//2
-        oy = canvas_h - vh_actual
+    
+    # NEW: Always center horizontally
+    ox = (canvas_w - vw_actual)//2
+    
+    # Use y from config or default to center
+    pos = template_video_cfg.get("position", {})
+    if "y" in pos:
+        # Y represents the CENTER of the video, not top-left
+        center_y = int(pos["y"])
+        oy = int(center_y - vh_actual // 2)
     else:
-        pos = template_video_cfg.get("position", {})
-        ox = int(pos.get("x", (canvas_w - vw_actual)//2))
-        oy = int(pos.get("y", (canvas_h - vh_actual)//2))
+        oy = (canvas_h - vh_actual)//2
 
     # prepare output tmp
     tmp_with_audio = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
@@ -517,6 +525,57 @@ def composite_canvas_and_video(canvas_path: str, input_video_path: str, out_vide
     return True
 
 
+def draw_text_with_color_highlight(
+    draw: ImageDraw.Draw,
+    lines: List[str],
+    font: ImageFont.FreeTypeFont,
+    x_origin: int,
+    y_origin: int,
+    highlight_phrases: List[List[str]],
+    highlight_color: str,
+    base_color: str,
+    line_origins: Optional[List[int]] = None,
+    line_positions: Optional[List[int]] = None,
+    line_height: Optional[int] = None,
+    line_step: Optional[int] = None,
+):
+    """Draw text with colored words instead of background highlights."""
+    line_height = line_height or get_line_height(font)
+    line_step = line_step or max(1, line_height)
+
+    if line_positions is None:
+        line_positions = []
+        current_y = y_origin
+        for idx in range(len(lines)):
+            line_positions.append(current_y)
+            if idx < len(lines) - 1:
+                current_y += line_step
+
+    highlight_positions = set()
+    for phrase in highlight_phrases:
+        positions = find_phrase_positions(lines, phrase)
+        for line_idx, start_word, end_word in positions:
+            for word_idx in range(start_word, end_word + 1):
+                highlight_positions.add((line_idx, word_idx))
+
+    for line_idx, line in enumerate(lines):
+        line_top = line_positions[line_idx] if line_idx < len(line_positions) else y_origin
+        words = line.split()
+        cursor_x = (
+            line_origins[line_idx]
+            if line_origins and line_idx < len(line_origins)
+            else x_origin
+        )
+
+        for word_idx, word in enumerate(words):
+            color = highlight_color if (line_idx, word_idx) in highlight_positions else base_color
+            draw.text((cursor_x, line_top), word, font=font, fill=color)
+            
+            word_width = font.getlength(word)
+            space_width = font.getlength(' ') if word_idx < len(words) - 1 else 0
+            cursor_x += word_width + space_width
+
+
 @dataclass
 class TemplateRenderRequest:
     """
@@ -528,6 +587,9 @@ class TemplateRenderRequest:
     text: str
     template_root: str
     overrides: Optional[Dict] = None
+    # NEW: Optional separate text for top/bottom
+    top_text: Optional[str] = None
+    bottom_text: Optional[str] = None
 
 
 class TemplateEngine:
@@ -566,42 +628,120 @@ class TemplateEngine:
         # Probe input video to understand aspect
         vid_w, vid_h = probe_video_size(self.request.input_video_path)
 
-        # Compute video box
+        # Compute video box with NEW X,Y positioning
         video_cfg = cfg.get("video", {})
         vw = int(canvas_w * (video_cfg.get("width_pct", 100) / 100.0))
         aspect = vid_h and (vid_w / vid_h) or (16 / 9)
         vh = max(2, int(vw / aspect))
-        vx = int((canvas_w - vw) // 2)
-        vertical_align = video_cfg.get("vertical_align", "center")
-        if vertical_align == "center":
-            vy = int((canvas_h - vh) // 2)
-        elif vertical_align == "top":
-            vy = 0
-        elif vertical_align == "bottom":
-            vy = canvas_h - vh
+        
+        # NEW: Always center horizontally
+        vx = int((canvas_w - vw) // 2)  # ALWAYS CENTERED HORIZONTALLY
+        
+        pos = video_cfg.get("position", {})
+        if "y" in pos:
+            # Y represents the CENTER of the video, not top-left
+            center_y = int(pos["y"])
+            vy = int(center_y - vh // 2)
         else:
-            vy = int(video_cfg.get("y", (canvas_h - vh) // 2))
+            # Default to center vertically
+            vy = int((canvas_h - vh) // 2)
+        
+        logger.debug(f"Video positioning: vx={vx}, vy={vy}, vw={vw}, vh={vh}, canvas_h={canvas_h}")
 
-        # Text layout
-        txt_cfg = cfg.get("text", {})
+        # Process top_text if enabled
+        top_text_cfg = cfg.get("top_text", {})
+        if top_text_cfg.get("enabled", False):
+            # Use specific top_text if provided, otherwise fall back to main text
+            text_content = self.request.top_text if self.request.top_text else self.request.text
+            self._render_text_block(
+                draw, image, root, top_text_cfg, canvas_w, canvas_h,
+                vx, vy, vw, vh, "top", text_content
+            )
+
+        # Process bottom_text if enabled
+        bottom_text_cfg = cfg.get("bottom_text", {})
+        if bottom_text_cfg.get("enabled", False):
+            # Use specific bottom_text if provided, otherwise fall back to main text
+            text_content = self.request.bottom_text if self.request.bottom_text else self.request.text
+            self._render_text_block(
+                draw, image, root, bottom_text_cfg, canvas_w, canvas_h,
+                vx, vy, vw, vh, "bottom", text_content
+            )
+
+        # BACKWARD COMPATIBILITY: If neither top_text nor bottom_text is configured,
+        # fall back to legacy "text" config
+        if not top_text_cfg.get("enabled", False) and not bottom_text_cfg.get("enabled", False):
+            legacy_text_cfg = cfg.get("text", {})
+            if legacy_text_cfg:
+                # Convert legacy config to top_text format
+                legacy_as_top = {
+                    "enabled": True,
+                    "font": legacy_text_cfg.get("font", ""),
+                    "font_size": legacy_text_cfg.get("font_size", 120),
+                    "min_font_size": legacy_text_cfg.get("min_font_size", 40),
+                    "max_lines": legacy_text_cfg.get("max_lines", 2),
+                    "line_width_pct": legacy_text_cfg.get("line_width_pct", 90),
+                    "line_spacing_factor": cfg.get("text.line_spacing_factor", legacy_text_cfg.get("line_spacing_factor", 1.35)),
+                    "color": legacy_text_cfg.get("color", "#ffffff"),
+                    "casing_mode": cfg.get("text.casing_mode", legacy_text_cfg.get("casing_mode", "original")),
+                    "align": legacy_text_cfg.get("align", "center"),
+                    "gap_px": legacy_text_cfg.get("position_relative_to_video", {}).get("gap_px", 20),
+                    "highlight": legacy_text_cfg.get("highlight", {})
+                }
+                text_content = self.request.top_text if self.request.top_text else self.request.text
+                self._render_text_block(
+                    draw, image, root, legacy_as_top, canvas_w, canvas_h,
+                    vx, vy, vw, vh, "top", text_content
+                )
+
+        # Header image (only if top_text is enabled)
+        if top_text_cfg.get("enabled", False):
+            header_cfg = cfg.get("header", {})
+            if header_cfg.get("enabled", False):
+                self._render_header(image, root, header_cfg, canvas_w, top_text_cfg, vx, vy)
+
+        # Logo with NEW positioning options
+        logo_cfg = cfg.get("logo", {})
+        if logo_cfg.get("enabled", True):
+            self._render_logo(image, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh)
+
+        # Save canvas to temp file
+        tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp_canvas.close()
+        image.save(tmp_canvas.name)
+
+        # Composite canvas and video
+        composite_canvas_and_video(tmp_canvas.name, self.request.input_video_path, self.request.output_video_path, cfg)
+
+        # Cleanup
+        try:
+            os.unlink(tmp_canvas.name)
+        except Exception:
+            pass
+
+        return True
+
+    def _render_text_block(self, draw, image, root, txt_cfg, canvas_w, canvas_h, vx, vy, vw, vh, position_type, text_content):
+        """Render a text block (top or bottom) relative to video."""
         font_rel = txt_cfg.get("font", "")
         font_path = root / font_rel if font_rel else None
+        
+        # Debug logging
+        logger.debug(f"_render_text_block called: position={position_type}, text='{text_content}'")
+        logger.debug(f"Font path: {font_path}, exists={font_path.exists() if font_path else False}")
+        
         requested_size = int(txt_cfg.get("font_size", 120))
         min_size = int(txt_cfg.get("min_font_size", 40))
         max_lines = int(txt_cfg.get("max_lines", 2))
         line_width_pct = float(txt_cfg.get("line_width_pct", 90))
         max_width = int(canvas_w * (line_width_pct / 100.0))
-        casing_mode = txt_cfg.get("casing_mode")
-        if casing_mode is None:
-            casing_mode = cfg.get("text.casing_mode")
-        render_text = apply_text_casing(self.request.text, casing_mode)
-        line_spacing_factor_cfg = txt_cfg.get("line_spacing_factor")
-        if line_spacing_factor_cfg is None:
-            line_spacing_factor_cfg = cfg.get("text.line_spacing_factor")
-        try:
-            line_spacing_factor = float(line_spacing_factor_cfg) if line_spacing_factor_cfg is not None else 1.35
-        except (TypeError, ValueError):
-            line_spacing_factor = 1.35
+        
+        casing_mode = txt_cfg.get("casing_mode", "original")
+        render_text = apply_text_casing(text_content, casing_mode)
+        
+        logger.debug(f"Render text after casing: '{render_text}'")
+        
+        line_spacing_factor = float(txt_cfg.get("line_spacing_factor", 1.35))
 
         # Choose font that fits within max_lines
         if font_path and font_path.exists():
@@ -620,10 +760,16 @@ class TemplateEngine:
             line_height=line_height,
         )
 
-        # CRITICAL FIX: Position text so BOTTOM is gap_px above video top
-        gap_px = int(txt_cfg.get("position_relative_to_video", {}).get("gap_px", 20))
-        text_bottom = vy - gap_px
-        text_top = int(text_bottom - text_h)
+        # Position text relative to video
+        gap_px = int(txt_cfg.get("gap_px", 20))
+        
+        if position_type == "top":
+            # Bottom of text should be gap_px above video top
+            text_bottom = vy - gap_px
+            text_top = int(text_bottom - text_h)
+        else:  # bottom
+            # Top of text should be gap_px below video bottom
+            text_top = vy + vh + gap_px
 
         # x origin by alignment
         align = txt_cfg.get("align", "center")
@@ -665,12 +811,16 @@ class TemplateEngine:
                 manual_words = hl_cfg.get("manual_words", [])
                 highlight_phrases = parse_highlight_words(manual_words)
             else:
-                # AI mode: use top_k from config (default 3)
+                # AI mode: use highlight_count from config (default 3)
                 top_k = int(hl_cfg.get("highlight_count", 3))
                 highlight_phrases = select_highlight_words_via_ai(render_text, top_k=top_k)
 
-        # Draw highlights FIRST (behind text)
-        if highlight_phrases:
+        # NEW: Check highlight type - background or color_word
+        highlight_type = hl_cfg.get("type", "background")  # "background" or "color_word"
+        text_color = txt_cfg.get("color", "#ffffff")
+
+        if highlight_phrases and highlight_type == "background":
+            # Draw highlights FIRST (behind text)
             draw_highlights(
                 draw,
                 lines,
@@ -678,84 +828,145 @@ class TemplateEngine:
                 x_origin,
                 text_top,
                 highlight_phrases,
-                hl_cfg.get("default_highlight_color", "#ffde59"),
+                hl_cfg.get("color", "#ffde59"),
                 line_origins=line_origins,
                 line_positions=line_positions,
                 line_height=line_height,
                 line_step=line_step,
             )
+            # Draw text ON TOP of highlights
+            for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+                line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+                draw.text((line_x, line_top), ln, font=font, fill=text_color)
+        elif highlight_phrases and highlight_type == "color_word":
+            # Draw text with colored words
+            draw_text_with_color_highlight(
+                draw,
+                lines,
+                font,
+                x_origin,
+                text_top,
+                highlight_phrases,
+                hl_cfg.get("color", "#ffde59"),
+                text_color,
+                line_origins=line_origins,
+                line_positions=line_positions,
+                line_height=line_height,
+                line_step=line_step,
+            )
+        else:
+            # No highlights, just draw text normally
+            for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+                line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+                draw.text((line_x, line_top), ln, font=font, fill=text_color)
 
-        # Draw text ON TOP of highlights
-        text_color = txt_cfg.get("color", "#ffffff")
-        for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
-            line_x = line_origins[idx] if idx < len(line_origins) else x_origin
-            draw.text((line_x, line_top), ln, font=font, fill=text_color)
+        # Store text bounds for header positioning
+        if position_type == "top":
+            txt_cfg["_computed_top"] = text_top
+            txt_cfg["_computed_height"] = text_h
 
-        # Logo with proper aspect ratio usag
-        logo_cfg = cfg.get("logo", {})
-        if logo_cfg.get("enabled", True):
-            logo_path = root / logo_cfg.get("path", "")
-            if logo_path.exists():
-                try:
-                    logo = Image.open(logo_path).convert("RGBA")
+    def _render_header(self, image, root, header_cfg, canvas_w, top_text_cfg, vx, vy):
+        """Render header image above top_text."""
+        header_path = root / header_cfg.get("path", "")
+        if not header_path.exists():
+            return
 
-                    sz = logo_cfg.get("size", {})
-                    target_w = sz.get("width")
-                    target_h = sz.get("height")
-
-                    # Preserve aspect ratio
-                    if target_w and target_h:
-                        target_w = int(target_w)
-                        target_h = int(target_h)
-                    elif target_w:
-                        target_w = int(target_w)
-                        aspect_ratio = logo.height / logo.width if logo.width else 1
-                        target_h = int(target_w * aspect_ratio)
-                    elif target_h:
-                        target_h = int(target_h)
-                        aspect_ratio = logo.width / logo.height if logo.height else 1
-                        target_w = int(target_h * aspect_ratio)
-                    else:
-                        target_w = logo.width
-                        target_h = logo.height
-
-                    logo = logo.resize((target_w, target_h), Image.LANCZOS)
-
-                    pos = logo_cfg.get("position", "top-right")
-                    margin = int(logo_cfg.get("margin", 36))
-
-                    if pos == "top-right":
-                        lx = canvas_w - target_w - margin
-                        ly = margin
-                    elif pos == "top-left":
-                        lx = margin
-                        ly = margin
-                    elif pos == "bottom-right":
-                        lx = canvas_w - target_w - margin
-                        ly = canvas_h - target_h - margin
-                    else:
-                        lx = margin
-                        ly = canvas_h - target_h - margin
-
-                    image.paste(logo, (lx, ly), logo)
-                except Exception:
-                    pass  # Silent fail for logo issues
-
-        # Save canvas to temp file
-        tmp_canvas = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-        tmp_canvas.close()
-        image.save(tmp_canvas.name)
-
-        # Composite canvas and video
-        composite_canvas_and_video(tmp_canvas.name, self.request.input_video_path, self.request.output_video_path, cfg)
-
-        # Cleanup
         try:
-            os.unlink(tmp_canvas.name)
-        except Exception:
-            pass
+            header = Image.open(header_path).convert("RGBA")
+            
+            # Get target width
+            target_w = header_cfg.get("width", 400)
+            
+            # Preserve aspect ratio
+            aspect_ratio = header.height / header.width if header.width else 1
+            target_h = int(target_w * aspect_ratio)
+            
+            header = header.resize((target_w, target_h), Image.LANCZOS)
+            
+            # Position above top_text
+            gap_px = int(header_cfg.get("gap_px", 20))
+            text_top = top_text_cfg.get("_computed_top", vy)
+            
+            hx = (canvas_w - target_w) // 2  # Center horizontally
+            hy = text_top - target_h - gap_px
+            
+            image.paste(header, (hx, hy), header)
+        except Exception as e:
+            logger.warning(f"Failed to render header: {e}")
 
-        return True
+    def _render_logo(self, image, root, logo_cfg, canvas_w, canvas_h, vx, vy, vw, vh):
+        """Render logo with advanced positioning and rotation."""
+        logo_path = root / logo_cfg.get("path", "")
+        if not logo_path.exists():
+            return
+
+        try:
+            logo = Image.open(logo_path).convert("RGBA")
+
+            sz = logo_cfg.get("size", {})
+            target_w = sz.get("width")
+            target_h = sz.get("height")
+
+            # Preserve aspect ratio
+            if target_w and target_h:
+                target_w = int(target_w)
+                target_h = int(target_h)
+            elif target_w:
+                target_w = int(target_w)
+                aspect_ratio = logo.height / logo.width if logo.width else 1
+                target_h = int(target_w * aspect_ratio)
+            elif target_h:
+                target_h = int(target_h)
+                aspect_ratio = logo.width / logo.height if logo.height else 1
+                target_w = int(target_h * aspect_ratio)
+            else:
+                target_w = logo.width
+                target_h = logo.height
+
+            logo = logo.resize((target_w, target_h), Image.LANCZOS)
+
+            # NEW: Rotation support
+            rotation = logo_cfg.get("rotation", 0)
+            if rotation != 0:
+                logo = logo.rotate(rotation, expand=True, resample=Image.BICUBIC)
+                # Update dimensions after rotation
+                target_w, target_h = logo.size
+
+            # NEW: Position modes
+            position_mode = logo_cfg.get("position_mode", "canvas")  # "canvas" or "video"
+            
+            if position_mode == "video":
+                # Position relative to video
+                video_relative = logo_cfg.get("video_relative", {})
+                offset_x = int(video_relative.get("x", 0))
+                offset_y = int(video_relative.get("y", 0))
+                lx = vx + offset_x
+                ly = vy + offset_y
+            else:
+                # Traditional canvas positioning
+                pos = logo_cfg.get("position", "top-right")
+                margin = int(logo_cfg.get("margin", 36))
+
+                # NEW: Support for x, y coordinates
+                if isinstance(pos, dict):
+                    lx = int(pos.get("x", margin))
+                    ly = int(pos.get("y", margin))
+                elif pos == "top-right":
+                    lx = canvas_w - target_w - margin
+                    ly = margin
+                elif pos == "top-left":
+                    lx = margin
+                    ly = margin
+                elif pos == "bottom-right":
+                    lx = canvas_w - target_w - margin
+                    ly = canvas_h - target_h - margin
+                else:  # bottom-left
+                    lx = margin
+                    ly = canvas_h - target_h - margin
+
+            image.paste(logo, (lx, ly), logo)
+        except Exception as e:
+            logger.warning(f"Failed to render logo: {e}")
 
 
 def render_with_template(input_video_path: str, output_video_path: str, text: str, template_root: str, overrides: dict = None):

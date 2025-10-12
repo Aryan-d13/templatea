@@ -16,4 +16,3 @@ def render(input_video, output_video, text, options=None, top_text=None, bottom_
     )
     engine = TemplateEngine(request)
     return engine.render()
-

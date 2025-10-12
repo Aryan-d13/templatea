@@ -24,10 +24,10 @@ import asyncio
 import logging
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
+from io import BytesIO
 from dotenv import load_dotenv
-import os
 
 load_dotenv() 
 
@@ -53,6 +53,7 @@ from telegram.ext import (
 # Configuration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+PUBLIC_FILE_BASE_URL = os.getenv("PUBLIC_FILE_BASE_URL", API_BASE_URL)
 API_KEY = os.getenv("API_KEY")
 
 if not TELEGRAM_BOT_TOKEN:
@@ -92,6 +93,18 @@ def clean_text(text: str) -> str:
     t = " ".join(t.splitlines())
     t = " ".join(t.split())
     return t.strip()
+
+
+def build_absolute_url(url: str, base: str) -> str:
+    """Normalize relative API paths into absolute URLs based on the provided base."""
+    if not url:
+        return ""
+    if url.startswith(("http://", "https://")):
+        return url
+    base = base.rstrip("/")
+    if not url.startswith("/"):
+        url = f"/{url}"
+    return f"{base}{url}"
 
 
 class TemplateaAPI:
@@ -237,6 +250,12 @@ async def reply_video_with_retry(message, *args, **kwargs):
     )
 
 
+async def reply_document_with_retry(message, *args, **kwargs):
+    return await send_with_retry(
+        "reply_document", lambda: message.reply_document(*args, **kwargs)
+    )
+
+
 async def edit_text_with_retry(message, *args, **kwargs):
     return await send_with_retry(
         "edit_text", lambda: message.edit_text(*args, **kwargs)
@@ -251,6 +270,60 @@ async def edit_message_text_with_retry(query, *args, **kwargs):
 
 # Global API client
 api = TemplateaAPI(API_BASE_URL, API_KEY)
+
+
+async def send_caption_text_if_available(message, workspace_id: str, files_snapshot: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
+    """Fetch caption.txt for the workspace and send it as text if available."""
+    try:
+        files = files_snapshot
+        if files is None:
+            workspace = await api.get_workspace(workspace_id)
+            if not workspace:
+                logger.warning("Workspace %s not found while trying to send caption", workspace_id)
+                await reply_text_with_retry(
+                    message,
+                    "Error generating caption file, sorry for the inconvenience."
+                )
+                return False
+            files = workspace.get("files", {}) or {}
+
+        caption_entry = files.get("caption") or {}
+        caption_url = caption_entry.get("url")
+        if not caption_url:
+            await reply_text_with_retry(
+                message,
+                "Error generating caption file, sorry for the inconvenience."
+            )
+            return False
+
+        caption_data = await api.download_file(caption_url)
+        if not caption_data:
+            await reply_text_with_retry(
+                message,
+                "Error generating caption file, sorry for the inconvenience."
+            )
+            return False
+
+        caption_text = caption_data.decode("utf-8", errors="ignore").strip()
+        if not caption_text:
+            await reply_text_with_retry(
+                message,
+                "Error generating caption file, sorry for the inconvenience."
+            )
+            return False
+
+        await reply_text_with_retry(
+            message,
+            f"{caption_text}"
+        )
+        return True
+    except Exception as exc:
+        logger.error("Failed to send caption file for %s: %s", workspace_id, exc)
+        await reply_text_with_retry(
+            message,
+            "Error generating caption file, sorry for the inconvenience."
+        )
+        return False
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -683,12 +756,15 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
 
     # Normalize to absolute URLs and remove duplicates.
     normalized_urls: List[str] = []
+    download_url_map: Dict[str, str] = {}
     for url in candidate_urls:
         if not url:
             continue
-        absolute = url if url.startswith("http") else f"{API_BASE_URL}{url}"
-        if absolute not in normalized_urls:
-            normalized_urls.append(absolute)
+        absolute_api = build_absolute_url(url, API_BASE_URL)
+        absolute_public = build_absolute_url(url, PUBLIC_FILE_BASE_URL)
+        if absolute_api not in normalized_urls:
+            normalized_urls.append(absolute_api)
+        download_url_map[absolute_api] = absolute_public
 
     if not normalized_urls:
         await reply_text_with_retry(
@@ -709,7 +785,8 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
             break
     
     if not video_data or not download_url:
-        fallback_msg = normalized_urls[-1]
+        fallback_absolute = normalized_urls[-1]
+        fallback_msg = download_url_map.get(fallback_absolute, fallback_absolute)
         await reply_text_with_retry(
             message,
             f"❌ Failed to download video.\n\n"
@@ -717,6 +794,7 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
         )
         return ConversationHandler.END
     
+    share_url = download_url_map.get(download_url, download_url)
     # Check file size (Telegram has a 50MB limit for bots)
     video_size_mb = len(video_data) / (1024 * 1024)
     
@@ -724,7 +802,7 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
         await reply_text_with_retry(
             message,
             f"⚠️ Video is too large ({video_size_mb:.1f}MB) to send via Telegram.\n\n"
-            f"Download it here:\n{download_url}"
+            f"Download it here:\n{share_url}"
         )
         return ConversationHandler.END
     
@@ -735,7 +813,6 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     )
     
     try:
-        from io import BytesIO
         video_file = BytesIO(video_data)
         video_file.name = "templatea_video.mp4"
         
@@ -752,18 +829,24 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
                 connect_timeout=60.0
             )
             
-            # Success - send completion message
-            await reply_text_with_retry(
-                message,
-                "🎉 All done! Send me another Instagram URL to create more videos."
-            )
+            caption_sent = await send_caption_text_if_available(message, workspace_id, files)
+            if caption_sent:
+                await reply_text_with_retry(
+                    message,
+                    "dYZ% All done! Caption is above. Send me another Instagram URL to create more videos."
+                )
+            else:
+                await reply_text_with_retry(
+                    message,
+                    "dYZ% All done! Send me another Instagram URL to create more videos."
+                )
         except telegram.error.TimedOut:
             # Video might still be uploading - inform user
             await reply_text_with_retry(
                 message,
                 "⚠️ Upload is taking longer than expected, but the video is likely still being sent.\n\n"
                 "If you don't receive it in 2 minutes, download here:\n"
-                f"{download_url}\n\n"
+                f"{share_url}\n\n"
                 "You can send another Instagram URL to create more videos."
             )
         
@@ -772,9 +855,8 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
         await reply_text_with_retry(
             message,
             f"❌ Failed to send video (Error: {str(e)}).\n\n"
-            f"You can download it here:\n{download_url}"
+            f"You can download it here:\n{share_url}"
         )
-        return ConversationHandler.END
         return ConversationHandler.END
     
     context.user_data.clear()
