@@ -30,3 +30,31 @@
 2025-10-12 22:11:45,657 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="You're a mom, and you're doing better" bottom="than you think, and that's something to be proud of always"
 2025-10-12 22:11:45,657 templates.advanced_template INFO advanced_template render call top="You're a mom, and you're doing better" bottom="than you think, and that's something to be proud of always"
 2025-10-12 22:13:33,138 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id marketing_spots --emit-json-workspace D:\Temp\tmp2r5cg0os.json
+2025-10-12 22:13:49,028 api.tasks INFO Cleared render cache for workspace DLpUZRqNUEu
+2025-10-12 22:14:06,290 orchestrator INFO render call workspace=DLpUZRqNUEu template=marketing_spots top="This mom's not lazy, she's just on energy-saving mode." bottom=None
+2025-10-12 22:30:38,908 __main__ INFO render call workspace=DPoQtyUjMK2 template=advanced_template top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 22:30:38,909 templates.advanced_template INFO advanced_template render call top='Di Maria saves the day' bottom='Discover his journey and impact on Argentine football history now'
+2025-10-12 22:33:22,233 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:33:22,878 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Unleash Your Inner Beauty, Mom' bottom='Discover how self-care and love can transform your life today' notes=[]
+2025-10-12 22:33:22,902 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top='Unleash Your Inner Beauty, Mom' bottom='Discover how self-care and love can transform your life today'
+2025-10-12 22:33:22,902 templates.advanced_template INFO advanced_template render call top='Unleash Your Inner Beauty, Mom' bottom='Discover how self-care and love can transform your life today'
+2025-10-12 22:43:43,232 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:43:44,202 orchestrator INFO dual_text: result status=success source=groq_dual_text top="Mom's guide to imperfect perfection" bottom='Laugh, relate, and rediscover your inner strength as a mom' notes=[]
+2025-10-12 22:43:44,231 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="Mom's guide to imperfect perfection" bottom='Laugh, relate, and rediscover your inner strength as a mom'
+2025-10-12 22:43:44,231 templates.advanced_template INFO advanced_template render call top="Mom's guide to imperfect perfection" bottom='Laugh, relate, and rediscover your inner strength as a mom'
+2025-10-12 22:50:01,271 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:50:02,169 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Beauty is a choice for moms too' bottom='Prioritize self care and rediscover your inner strength today' notes=[]
+2025-10-12 22:50:02,194 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top='Beauty is a choice for moms too' bottom='Prioritize self care and rediscover your inner strength today'
+2025-10-12 22:50:02,194 templates.advanced_template INFO advanced_template render call top='Beauty is a choice for moms too' bottom='Prioritize self care and rediscover your inner strength today'
+2025-10-12 22:54:51,863 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:54:52,635 orchestrator INFO dual_text: result status=success source=groq_dual_text top="Mom, you're a hot mess" bottom="and that's what makes you beautifully imperfect, keep shining" notes=[]
+2025-10-12 22:54:52,701 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="Mom, you're a hot mess" bottom="and that's what makes you beautifully imperfect, keep shining"
+2025-10-12 22:54:52,701 templates.advanced_template INFO advanced_template render call top="Mom, you're a hot mess" bottom="and that's what makes you beautifully imperfect, keep shining"
+2025-10-12 22:57:18,558 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:57:19,492 orchestrator INFO dual_text: result status=success source=groq_dual_text top="This One's for the Mom Who Forgot She's Beautiful" bottom='Celebrate the beauty in your everyday moments and greatness' notes=['TOP_TEXT: shorter than 5 words, fallback applied.']
+2025-10-12 22:57:19,550 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top="This One's for the Mom Who Forgot She's Beautiful" bottom='Celebrate the beauty in your everyday moments and greatness'
+2025-10-12 22:57:19,550 templates.advanced_template INFO advanced_template render call top="This One's for the Mom Who Forgot She's Beautiful" bottom='Celebrate the beauty in your everyday moments and greatness'
+2025-10-12 22:58:41,484 orchestrator INFO dual_text: generating overlay copy workspace=DLpUZRqNUEu template=advanced_template key_present=True
+2025-10-12 22:58:43,839 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Beauty is more than skin deep' bottom='Discover your inner strength and outer beauty today naturally' notes=[]
+2025-10-12 22:58:43,904 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top='Beauty is more than skin deep' bottom='Discover your inner strength and outer beauty today naturally'
+2025-10-12 22:58:43,904 templates.advanced_template INFO advanced_template render call top='Beauty is more than skin deep' bottom='Discover your inner strength and outer beauty today naturally'
