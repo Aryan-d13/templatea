@@ -38,6 +38,7 @@ Notes:
 
 from __future__ import annotations
 import os, json, re, unicodedata, requests
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 import os
@@ -181,13 +182,23 @@ def _relevance(line: str, ocr: str, dl: str) -> float:
 
 # ------------------ External Calls ------------------
 
-def _groq_chat(api_key: str, model: str, system: str, user: str, temperature: float, timeout: int) -> str:
+def _groq_chat(
+    api_key: str,
+    model: str,
+    system: str,
+    user: str,
+    temperature: float,
+    timeout: int,
+    seed: Optional[int] = None,
+) -> str:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
     }
+    if seed is not None:
+        payload["seed"] = seed
     r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=timeout)
     r.raise_for_status()
     data = r.json()
@@ -292,6 +303,200 @@ def _hints_from_pplx_text(text: str) -> List[str]:
 
 # ------------------ Public API ------------------
 
+def generate_caption_with_hashtags(
+    *,
+    ocr_text: Optional[str],
+    downloader_caption: Optional[str],
+    workspace_dir: Optional[Path] = None,
+    groq_api_key: str,
+    perplexity_api_key: Optional[str] = None,
+    use_perplexity: bool = True,
+    existing_perplexity: Optional[Dict[str, Any]] = None,
+    brand: Optional[str] = None,
+    topic: Optional[str] = None,
+    target: Optional[str] = None,
+    objective: Optional[str] = "engagement",
+    cta_hint: Optional[str] = None,
+    tone: str = "clever, modern, culturally aware, human",
+    word_limit_max: int = 100,
+    preferred_min: int = 50,
+    preferred_max: int = 70,
+    model: str = "llama-3.3-70b-versatile",
+    temperature: float = 0.7,
+    seed: Optional[int] = None,
+    caption_filename: str = "caption.txt",
+    timeout: int = 60,
+) -> Dict[str, Any]:
+    """
+    Generate a full Instagram caption + hashtag block and persist it inside the active workspace.
+    Returns a dict describing the outcome, but never raises.
+    """
+
+    notes: List[str] = []
+    result: Dict[str, Any] = {
+        "status": "skipped",
+        "caption": None,
+        "hashtags": None,
+        "output": None,
+        "file_path": None,
+        "notes": notes,
+        "perplexity": None,
+    }
+
+    ocr_clean = _clean_text(ocr_text or "")
+    downloader_clean = _clean_text(downloader_caption or "")
+    primary_text = downloader_clean or ocr_clean
+    if not primary_text:
+        notes.append("No caption or OCR text provided; skipping caption generation.")
+        return result
+
+    if not groq_api_key:
+        notes.append("Missing GROQ_API_KEY; skipping caption generation.")
+        return result
+
+    ws_path: Optional[Path] = None
+    if workspace_dir:
+        try:
+            ws_path = Path(workspace_dir).resolve()
+        except Exception:
+            ws_path = Path(workspace_dir)
+
+    entities = _extract_entities(f"{ocr_clean}\n{downloader_clean}")
+
+    hints: List[str] = []
+    citations: List[Dict[str, str]] = []
+    pplx_text = ""
+
+    if existing_perplexity:
+        hints = list(existing_perplexity.get("hints") or [])
+        citations = list(existing_perplexity.get("citations") or [])
+        pplx_text = str(existing_perplexity.get("raw_text") or "")
+
+    if use_perplexity and not hints and perplexity_api_key:
+        try:
+            query = _build_browse_query(ocr_clean, downloader_clean, entities)
+            citations, pplx_text = _pplx_browse(perplexity_api_key, query, timeout=timeout)
+            hints = _hints_from_pplx_text(pplx_text)
+        except Exception as exc:
+            notes.append(f"perplexity_error: {exc}")
+    elif use_perplexity and not perplexity_api_key:
+        notes.append("Perplexity browsing requested but PERPLEXITY_API_KEY missing.")
+    elif not use_perplexity:
+        notes.append("Perplexity browsing disabled for caption generation.")
+
+    system_prompt = (
+        "You craft Instagram captions with hashtags. "
+        "Output MUST be only caption and hashtags with a single blank line between. "
+        "Do not include any extra commentary. Do not include hashtags inside the caption sentences. "
+        "No apostrophes and no em dashes. Use simple punctuation. "
+        f"Total words including hashtags must be <= {word_limit_max}. "
+        f"Prefer {preferred_min}-{preferred_max} words. "
+        "Aim for 10 to 12 relevant hashtags. "
+        "Keep tone clever and modern. Add a clean CTA that matches the objective. "
+        "If information conflicts, prioritize brand copy over notes over web results. "
+        "Never mention uncertainty. Never cite sources."
+    )
+
+    payload: Dict[str, Optional[str]] = {
+        "brand": brand,
+        "topic": topic,
+        "target": target,
+        "objective": objective,
+        "cta_hint": cta_hint,
+        "tone": tone,
+        "copy_text": downloader_clean or None,
+        "ocr_text": ocr_clean or None,
+        "web_results_text": pplx_text or None,
+        "hints": "; ".join(hints) if hints else None,
+    }
+
+    user_prompt = (
+        "TASK: Produce caption + hashtags exactly in the format below.\n"
+        "FORMAT:\n"
+        "CAPTION LINES\n"
+        "\n"
+        "#tag1 #tag2 ...\n"
+        "RULES: No apostrophes. No em dashes. No quotes. No leading or trailing spaces. "
+        "Do not exceed word limit. 10 to 12 hashtags. CTA included in caption. "
+        "PRIORITY OF TRUTH: copy_text > ocr_text > web_results_text.\n"
+        f"INPUTS:\n{json.dumps(payload, ensure_ascii=False, separators=(',', ': '))}"
+    )
+
+    try:
+        raw_output = _groq_chat(
+            groq_api_key,
+            model,
+            system_prompt,
+            user_prompt,
+            temperature=temperature,
+            timeout=timeout,
+            seed=seed,
+        )
+    except Exception as exc:
+        notes.append(f"groq_error: {exc}")
+        result["perplexity"] = {"hints": hints, "citations": citations, "raw_text": pplx_text}
+        return result
+
+    sanitized_output = raw_output.strip()
+    for dash in ("\u2014", "\u2013"):
+        sanitized_output = sanitized_output.replace(dash, " ")
+    for apostrophe in ("'", "\u2018", "\u2019"):
+        sanitized_output = sanitized_output.replace(apostrophe, "")
+
+    parts = sanitized_output.split("\n\n", 1)
+    if len(parts) == 2:
+        caption_block, hashtags_block = parts
+    else:
+        lines = [line.strip() for line in sanitized_output.splitlines() if line.strip()]
+        if not lines:
+            notes.append("groq_empty_output")
+            result["perplexity"] = {"hints": hints, "citations": citations, "raw_text": pplx_text}
+            return result
+        caption_block = " ".join(lines[:-1]) if len(lines) > 1 else lines[0]
+        hashtags_block = lines[-1]
+
+    caption_block = "\n".join([ln.strip() for ln in caption_block.splitlines() if ln.strip()])
+    hashtags_block = " ".join(hashtags_block.split())
+
+    if "#" not in hashtags_block:
+        notes.append("hashtags_missing")
+    hashtags_tokens = [tok for tok in hashtags_block.split() if tok.startswith("#")]
+    if not 9 <= len(hashtags_tokens) <= 13:
+        notes.append(f"hashtags_count={len(hashtags_tokens)}")
+
+    total_words = _count_words(f"{caption_block} {hashtags_block}")
+    if total_words > word_limit_max:
+        notes.append(f"word_count_exceeds({total_words}>{word_limit_max})")
+
+    combined_output = f"{caption_block}\n\n{hashtags_block}".strip()
+
+    file_path: Optional[Path] = None
+    if ws_path:
+        try:
+            target_dir = ws_path / "02_ocr"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            file_path = target_dir / caption_filename
+            file_path.write_text(combined_output + "\n", encoding="utf-8")
+        except Exception as exc:
+            notes.append(f"write_error: {exc}")
+            file_path = None
+
+    has_output = bool(combined_output)
+    status_value = "success" if has_output else "skipped"
+    result.update(
+        {
+            "status": status_value,
+            "caption": caption_block,
+            "hashtags": hashtags_block,
+            "output": combined_output if has_output else None,
+            "file_path": str(file_path) if file_path else None,
+        }
+    )
+    result["perplexity"] = {"hints": hints, "citations": citations, "raw_text": pplx_text}
+    if ws_path and file_path is None:
+        notes.append("caption_not_written")
+    return result
+
 def generate_ai_one_liners_browsing(
     ocr_caption: str,
     *,
@@ -333,6 +538,7 @@ def generate_ai_one_liners_browsing(
     # Optional browse
     hints: List[str] = []
     citations: List[Dict[str, str]] = []
+    pplx_text: str = ""
     if use_perplexity and perplexity_api_key:
         try:
             q = _build_browse_query(ocr, dl, entities)
@@ -451,5 +657,10 @@ def generate_ai_one_liners_browsing(
     except Exception:
         pass
 
+    result["perplexity"] = {
+        "hints": hints,
+        "citations": citations,
+        "raw_text": pplx_text,
+    }
     result["one_liners"] = final[:3]
     return result
