@@ -41,7 +41,19 @@
       }
   },
   "bottom_text": {
-      "enabled": false
+      "enabled": false,
+      "font": "assets/canva-sans-bold.ttf",
+      "font_size": 28,
+      "min_font_size": 10,
+      "max_lines": 3,
+      "line_width_pct": 75,
+      "line_spacing_factor": 1.3,
+      "color": "#a6a6a6",
+      "casing_mode": "none",
+      "align": "center",
+      "gap_px": 33,
+      "highlight": {
+          "enabled": false}
   },
   "logo": {
       "enabled": true,
@@ -50,9 +62,10 @@
           "width": 100
       },
       "position_mode": "canvas",
-      "video_relative" : {"x":918, "y": 58.1},
-      "position": "top-right",
-      "margin": 40,
-      "rotation": 0
+    "position": {
+      "x": 918,
+      "y": 58.1
+    }
+
   }
 }

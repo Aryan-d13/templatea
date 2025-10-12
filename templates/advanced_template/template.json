@@ -63,17 +63,17 @@
       "gap_px": 25
     },
     "logo": {
-      "enabled": true,
-      "path": "assets/IIA.png",
-      "size": {
-        "width": 30
-      },
-      "position_mode": "video",
-      "video_relative" : {"x":20, "y": 20},
-      "position": "top-right",
-      "margin": 40,
-      "rotation": 0
+    "enabled": true,
+    "path": "assets/IIA.png",
+    "size": {
+      "width": 120
     },
+    "position_mode": "video",
+    "video_relative": {
+      "x": 20,
+      "y": 20
+    }
+  },
     "renderer": {
       "module": "template_engine",
       "entrypoint": "render_with_template"
