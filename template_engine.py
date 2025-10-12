@@ -29,7 +29,10 @@ from typing import Tuple, List, Set, Optional, Dict
 from dotenv import load_dotenv
 import os
 
-load_dotenv() 
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+api_key = os.getenv("GROQ_API_KEY", "").strip()
 
 GROQ_CHAT_COMPLETIONS_URL = "https://api.groq.com/openai/v1/chat/completions"
 HIGHLIGHT_SYSTEM_PROMPT = (
@@ -340,6 +343,7 @@ def _call_groq_highlight_phrase(text: str, n: int, api_key: str, model: str = "l
         return None
     
     n=1
+    logger.debug("highlight ai preparing Groq call key_present=%s key_length=%d", bool(api_key), len(api_key))
 
     logger.debug("highlight ai request: text_len=%d top_k=%d model=%s", len(text), n, model)
 
@@ -373,6 +377,7 @@ def _call_groq_highlight_phrase(text: str, n: int, api_key: str, model: str = "l
 
     try:
         resp = requests.post(GROQ_CHAT_COMPLETIONS_URL, headers=headers, json=payload, timeout=timeout)
+        logger.debug("highlight ai response http_status=%s", resp.status_code)
         resp.raise_for_status()
         logger.debug("highlight ai response status=%s body=%r", resp.status_code, resp.text[:200])
         data = resp.json()
@@ -420,7 +425,13 @@ def select_highlight_words_via_ai(text: str, top_k: int = 3) -> List[List[str]]:
         logger.info("highlight fallback tokens=%s", fallback)
         return fallback
 
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    logger.debug(
+        "highlight ai env check: key_present=%s key_length=%d",
+        bool(api_key),
+        len(api_key),
+    )
+
+    
     if not api_key:
         logger.info("highlight ai skipped: GROQ_API_KEY missing")
         logger.info("highlight fallback tokens=%s", fallback)
@@ -663,10 +674,14 @@ class TemplateEngine:
         if bottom_text_cfg.get("enabled", False):
             # Use specific bottom_text if provided, otherwise fall back to main text
             text_content = self.request.bottom_text if self.request.bottom_text else self.request.text
-            self._render_text_block(
-                draw, image, root, bottom_text_cfg, canvas_w, canvas_h,
-                vx, vy, vw, vh, "bottom", text_content
-            )
+            try:
+                self._render_text_block(
+                    draw, image, root, bottom_text_cfg, canvas_w, canvas_h,
+                    vx, vy, vw, vh, "bottom", text_content
+                )
+            except Exception as exc:
+                logger.error("bottom_text render failed: type=%s value=%r error=%s", type(text_content), text_content, exc, exc_info=True)
+                raise
 
         # BACKWARD COMPATIBILITY: If neither top_text nor bottom_text is configured,
         # fall back to legacy "text" config

@@ -37,19 +37,29 @@ Notes:
 """
 
 from __future__ import annotations
+import logging
 import os, json, re, unicodedata, requests
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
-import os
 
-load_dotenv() 
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
+
+logger = logging.getLogger(__name__)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("[ai_hook] %(levelname)s %(message)s"))
+    logger.addHandler(handler)
+if not logger.level or logger.level > logging.DEBUG:
+    logger.setLevel(logging.INFO)
+logger.propagate = False
 
 # ------------------ Constants ------------------
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 PPLX_API_URL = "https://api.perplexity.ai/chat/completions"
 
-DRAFTS_MODEL_PREF = "llama-3.1-8b-instant"     # fast, cheap, explores breadth
+DRAFTS_MODEL_PREF = "gpt-oss-120b"     # fast, cheap, explores breadth
 CRITIC_MODEL_PREF  = "llama-3.3-70b-versatile"         # stronger selector for quality
 
 # ------------------ Text Utilities ------------------
@@ -191,6 +201,13 @@ def _groq_chat(
     timeout: int,
     seed: Optional[int] = None,
 ) -> str:
+    logger.debug(
+        "groq_chat call model=%s temperature=%.2f seed=%s key_present=%s",
+        model,
+        temperature,
+        seed,
+        bool(api_key),
+    )
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
         "model": model,
@@ -199,10 +216,37 @@ def _groq_chat(
     }
     if seed is not None:
         payload["seed"] = seed
-    r = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=timeout)
-    r.raise_for_status()
-    data = r.json()
-    return str(data["choices"][0]["message"]["content"]).strip()
+    try:
+        response = requests.post(GROQ_API_URL, headers=headers, json=payload, timeout=timeout)
+    except requests.RequestException as exc:  # pragma: no cover - network issue
+        logger.error("groq_chat request failure: %s", exc, exc_info=True)
+        raise
+
+    if response.status_code >= 400:
+        logger.warning(
+            "groq_chat non-success status=%s body=%r",
+            response.status_code,
+            response.text[:400],
+        )
+    response.raise_for_status()
+    logger.debug(
+        "groq_chat status=%s latency=%.3fs",
+        response.status_code,
+        response.elapsed.total_seconds() if response.elapsed else -1,
+    )
+
+    try:
+        data = response.json()
+    except json.JSONDecodeError as exc:
+        logger.error("groq_chat JSON decode error: %s body=%r", exc, response.text[:400])
+        raise
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        logger.error("groq_chat unexpected payload structure: %s data=%r", exc, data)
+        raise
+    return str(content).strip()
 
 
 def _pplx_browse(perplexity_api_key: str, query: str, model: str = "sonar-pro", timeout: int = 45) -> Tuple[List[Dict[str, str]], str]:
@@ -234,7 +278,7 @@ def _pplx_browse(perplexity_api_key: str, query: str, model: str = "sonar-pro", 
 DRAFTS_SYS = (
     "You generate on-video hook one-liners for short ad reels.\n"
     "Return JSON ONLY with key \"drafts\" as an array of strings.\n"
-    "Rules: 4–8 words (hard cap 10), no hashtags/@, no unverifiable facts."
+    "Rules: 8 to 12 words (hard cap 18), no hashtags/@, no unverifiable facts."
 )
 
 DRAFTS_USER_TMPL = (
@@ -250,7 +294,7 @@ DRAFTS_USER_TMPL = (
 
 CRITIC_SYS = (
     "You are a selector that chooses the best 3 one-liners for an ad reel.\n"
-    "Rules: 4–8 words (max 10), no hashtags/@, no unverifiable facts.\n"
+    "Rules: 8 to 12 words (max 18), no hashtags/@, no unverifiable facts.\n"
     "Ensure style diversity (not 3 of the same). Return JSON ONLY:\n"
     "{\"one_liners\":[\"...\", \"...\", \"...\"], \"reasons\":[\"...\", \"...\", \"...\"]}"
 )
@@ -300,6 +344,230 @@ def _hints_from_pplx_text(text: str) -> List[str]:
             b = b[:140].rstrip() + "…"
         out.append(b)
     return out[:3]
+
+
+
+DUAL_SYS = """You are an advertising copy chief for short-form video overlays.
+Produce two complementary lines for on-screen text.
+Constraints: respond with valid JSON only.
+TOP_TEXT: 6-12 words, hooks attention, punctuation allowed but no emojis, hashtags, or @mentions.
+BOTTOM_TEXT: 10-18 words, supportive detail and gentle CTA, same safety rules.
+Stay truthful to the supplied context; keep tone clever, modern, and brand-safe.
+"""
+
+DUAL_USER_TMPL = """CONTEXT (JSON):
+{context_json}
+
+Tasks:
+- TOP_TEXT is the hero hook above the video.
+- BOTTOM_TEXT reinforces value, adds nuance, or nudges action.
+- Avoid duplicating sentences; make bottom feel like a continuation.
+- Word limits: TOP_TEXT <= {top_max_words} words, BOTTOM_TEXT <= {bottom_max_words} words.
+- No hashtags, no @mentions, no emoji, no quotation marks.
+
+Return JSON exactly as {{"top_text": "...", "bottom_text": "..."}}.
+"""
+
+TOP_TEXT_MIN_WORDS = 5
+TOP_TEXT_MAX_WORDS = 12
+BOTTOM_TEXT_MIN_WORDS = 8
+BOTTOM_TEXT_MAX_WORDS = 18
+
+
+def generate_dual_text_pair(
+    *,
+    groq_api_key: str,
+    ocr_text: str,
+    downloader_caption: Optional[str] = None,
+    ai_one_liners: Optional[List[Any]] = None,
+    perplexity_payload: Optional[Dict[str, Any]] = None,
+    temperature: float = 0.65,
+    timeout: int = 60,
+    seed: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Generate paired top/bottom overlay copy with Groq and safe fallbacks."""
+    notes: List[str] = []
+    model_name = "llama-3.3-70b-versatile"
+    result: Dict[str, Any] = {
+        "status": "fallback",
+        "top_text": "",
+        "bottom_text": "",
+        "notes": notes,
+        "source": "fallback",
+        "raw_output": None,
+        "model": model_name,
+        "perplexity_hints": None,
+    }
+    logger.info(
+        "dual_text: start (ocr_len=%d downloader_len=%d ai_candidates=%d key_present=%s)",
+        len(ocr_text or ""),
+        len(downloader_caption or ""),
+        len(ai_one_liners or []) if ai_one_liners else 0,
+        bool(groq_api_key),
+    )
+
+    def _strip_noise(value: str) -> str:
+        cleaned = _clean_text(value or "")
+        cleaned = cleaned.replace("#", " ").replace("@", " ")
+        return " ".join(cleaned.split())
+
+    def _fallback_pair() -> Tuple[str, str]:
+        candidates: List[str] = []
+        for raw in (ocr_text, downloader_caption):
+            if raw:
+                cleaned = _strip_noise(raw)
+                if cleaned:
+                    candidates.append(cleaned)
+        if ai_one_liners:
+            for item in ai_one_liners:
+                if isinstance(item, dict):
+                    value = item.get("text") or item.get("caption") or item.get("one_liner")
+                else:
+                    value = item
+                if value:
+                    cleaned = _strip_noise(str(value))
+                    if cleaned:
+                        candidates.append(cleaned)
+        if not candidates:
+            candidates = ["This deserves your attention"]
+        top_seed = candidates[0]
+        bottom_seed = candidates[1] if len(candidates) > 1 else f"{candidates[0]} Explore what happens next."
+        return top_seed, bottom_seed
+
+    fallback_top_raw, fallback_bottom_raw = _fallback_pair()
+    fallback_top_base = _strip_noise(fallback_top_raw) or "This deserves your attention"
+    fallback_bottom_base = _strip_noise(fallback_bottom_raw) or "Stay tuned for the reveal."
+
+    def _finalize_slot(value: str, fallback: str, label: str, min_words: int, max_words: int) -> str:
+        candidate = _strip_noise(value)
+        if not candidate:
+            notes.append(f"{label}: empty after cleaning, fallback used.")
+            candidate = fallback
+        words = candidate.split()
+        if len(words) > max_words:
+            candidate = " ".join(words[:max_words])
+            notes.append(f"{label}: trimmed to {max_words} words.")
+            words = candidate.split()
+        if len(words) < min_words and fallback:
+            candidate = fallback
+            notes.append(f"{label}: shorter than {min_words} words, fallback applied.")
+        return candidate
+
+    def _apply_fallback(status: str) -> Dict[str, Any]:
+        top_text = _finalize_slot(fallback_top_base, fallback_top_base, "TOP_TEXT fallback", TOP_TEXT_MIN_WORDS, TOP_TEXT_MAX_WORDS)
+        bottom_seed = fallback_bottom_base if fallback_bottom_base != fallback_top_base else f"{fallback_bottom_base} Stay with us."
+        bottom_text = _finalize_slot(bottom_seed, fallback_top_base, "BOTTOM_TEXT fallback", BOTTOM_TEXT_MIN_WORDS, BOTTOM_TEXT_MAX_WORDS)
+        if top_text == bottom_text:
+            alt = f"{bottom_text} Discover more." if len(bottom_text.split()) < BOTTOM_TEXT_MAX_WORDS else fallback_top_base
+            bottom_text = _finalize_slot(alt, fallback_top_base, "BOTTOM_TEXT dedupe", BOTTOM_TEXT_MIN_WORDS, BOTTOM_TEXT_MAX_WORDS)
+        result.update({
+            "status": status,
+            "top_text": top_text,
+            "bottom_text": bottom_text,
+            "source": status,
+        })
+        logger.warning(
+            "dual_text: returning fallback status=%s top=%r bottom=%r notes=%s",
+            status,
+            top_text,
+            bottom_text,
+            notes,
+        )
+        return result
+
+    if not groq_api_key:
+        notes.append("Missing GROQ_API_KEY; using fallback copy.")
+        logger.warning("dual_text: GROQ_API_KEY missing; skipping Groq call.")
+        return _apply_fallback("fallback_missing_key")
+
+    ai_lines: List[str] = []
+    if ai_one_liners:
+        for item in ai_one_liners:
+            if isinstance(item, dict):
+                value = item.get("text") or item.get("caption") or item.get("one_liner")
+            else:
+                value = item
+            if value:
+                cleaned = _strip_noise(str(value))
+                if cleaned:
+                    ai_lines.append(cleaned)
+    ai_lines = ai_lines[:8]
+
+    pplx_hints: List[str] = []
+    pplx_raw = None
+    if isinstance(perplexity_payload, dict):
+        hints = perplexity_payload.get("hints")
+        if isinstance(hints, list):
+            pplx_hints = [str(h).strip() for h in hints if str(h).strip()]
+        pplx_raw = perplexity_payload.get("raw_text")
+        result["perplexity_hints"] = pplx_hints
+
+    context = {
+        "ocr_text": _strip_noise(ocr_text),
+        "downloader_caption": _strip_noise(downloader_caption or ""),
+        "ai_one_liners": ai_lines,
+    }
+    if pplx_hints:
+        context["perplexity_hints"] = pplx_hints
+    if pplx_raw:
+        context["perplexity_summary"] = str(pplx_raw)
+
+    context_json = json.dumps(context, ensure_ascii=False, indent=2)
+    user_prompt = DUAL_USER_TMPL.format(
+        context_json=context_json,
+        top_max_words=TOP_TEXT_MAX_WORDS,
+        bottom_max_words=BOTTOM_TEXT_MAX_WORDS,
+    )
+
+    try:
+        raw_output = _groq_chat(
+            groq_api_key,
+            model_name,
+            DUAL_SYS,
+            user_prompt,
+            temperature=temperature,
+            timeout=timeout,
+            seed=seed,
+        )
+    except Exception as exc:  # noqa: BLE001
+        notes.append(f"groq_request_error: {exc}")
+        return _apply_fallback("fallback_groq_error")
+
+    result["raw_output"] = raw_output
+    parsed = _extract_json(raw_output)
+    if not isinstance(parsed, dict):
+        notes.append("groq_response_parse_error: missing top/bottom in JSON")
+        return _apply_fallback("fallback_parse_error")
+
+    top_candidate = str(parsed.get("top_text") or "").strip()
+    bottom_candidate = str(parsed.get("bottom_text") or "").strip()
+    if not top_candidate and not bottom_candidate:
+        notes.append("groq_response_empty: falling back")
+        return _apply_fallback("fallback_empty")
+
+    top_text = _finalize_slot(top_candidate, fallback_top_base, "TOP_TEXT", TOP_TEXT_MIN_WORDS, TOP_TEXT_MAX_WORDS)
+    bottom_seed = fallback_bottom_base if fallback_bottom_base != fallback_top_base else fallback_top_base
+    bottom_text = _finalize_slot(bottom_candidate, bottom_seed, "BOTTOM_TEXT", BOTTOM_TEXT_MIN_WORDS, BOTTOM_TEXT_MAX_WORDS)
+
+    if top_text == bottom_text:
+        notes.append("BOTTOM_TEXT matched TOP_TEXT; adjusted with fallback blend.")
+        alt = bottom_candidate if bottom_candidate and bottom_candidate != top_text else f"{fallback_bottom_base} Discover why it matters."
+        bottom_text = _finalize_slot(alt, fallback_bottom_base, "BOTTOM_TEXT dedupe", BOTTOM_TEXT_MIN_WORDS, BOTTOM_TEXT_MAX_WORDS)
+
+    result.update({
+        "status": "success",
+        "top_text": top_text,
+        "bottom_text": bottom_text,
+        "source": "groq_dual_text",
+    })
+    logger.info(
+        "dual_text: success source=%s top=%r bottom=%r notes=%s",
+        result["source"],
+        top_text,
+        bottom_text,
+        notes,
+    )
+    return result
 
 # ------------------ Public API ------------------
 

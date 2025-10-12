@@ -29,6 +29,9 @@ from ai_hook_orchestrator_perplexity import (
     generate_caption_with_hashtags,
 )
 
+perplexity_api_key = (os.getenv("PERPLEXITY_API_KEY") or "").strip()
+groq_api_key = os.getenv("GROQ_API_KEY") 
+api_key = os.getenv("GEMINI_API_KEY")
 
 def _safe_print(*args, **kwargs):
     encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
@@ -431,12 +434,11 @@ def main() -> None:
     args = parser.parse_args()
     load_env_file()
 
-    api_key = args.api_key or os.getenv("GEMINI_API_KEY")
+    
     if not api_key:
         raise SystemExit("Set GEMINI_API_KEY (environment or .env) or use --api-key to provide a Gemini API key")
 
-    perplexity_api_key = (args.perplexity_key or os.getenv("PERPLEXITY_API_KEY") or "").strip()
-    groq_api_key = os.getenv("GROQ_API_KEY") or args.groq_key or ""
+    
     
     ai_copy_enabled = not args.disable_ai_copy
     if ai_copy_enabled and not perplexity_api_key:

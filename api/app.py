@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 from fastapi import (
     APIRouter,
