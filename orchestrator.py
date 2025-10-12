@@ -983,6 +983,9 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             except Exception:
                 registry_renderer_factory = None
 
+    # A fresh render is required; mark status accordingly so downstream consumers wait for completion.
+    write_status(ws, "04_render", "rendering", extra={"template": template_key})
+
     if effective_template_id and registry_renderer_factory:
         try:
             renderer = registry_renderer_factory(effective_template_id)

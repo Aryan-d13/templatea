@@ -38,6 +38,7 @@ from pydantic import BaseModel, AnyHttpUrl, Field
 from . import storage, template_registry
 from .tasks import events as task_events
 from .tasks import process_workspace, run_orchestrator_for_url
+from orchestrator import write_status  # type: ignore
 
 
 API_PREFIX = "/api/v1"
@@ -481,6 +482,12 @@ async def update_choice(workspace_id: str, body: ChoiceRequest, background: Back
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
 
     _write_choice_file(workspace_id, body)
+    # Immediately reflect that a fresh render is pending so clients do not pick up stale outputs.
+    try:
+        write_status(ws_path, "04_render", "pending", extra={"reason": "choice_submitted"})
+    except Exception:
+        # best-effort; downstream steps will still attempt rendering
+        pass
     
     # IMPORTANT: Clear render cache to force fresh render with new copy
     from .tasks import clear_render_cache

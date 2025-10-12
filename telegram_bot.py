@@ -95,6 +95,14 @@ def clean_text(text: str) -> str:
     return t.strip()
 
 
+def normalize_for_render(text: str) -> str:
+    """Mirror orchestrator text normalization so comparisons match render metadata."""
+    if not text:
+        return ""
+    replaced = text.replace("\u2014", ", ").replace("\u2013", ", ")
+    return clean_text(replaced)
+
+
 def build_absolute_url(url: str, base: str) -> str:
     """Normalize relative API paths into absolute URLs based on the provided base."""
     if not url:
@@ -665,7 +673,7 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
     # Wait a moment for the backend to process the choice
     await asyncio.sleep(2)
     submitted_at = datetime.utcnow()
-    selected_clean = clean_text(selected_text)
+    selected_clean = normalize_for_render(selected_text)
     
     # Poll for render completion
     max_attempts = 300  # 5 minutes
@@ -702,15 +710,24 @@ async def finalize_choice(message, selected_text: str, choice_type: str, context
             logger.info(f"Render status changed to: {render_status}")
         
         if render_status == "success":
-            # Log for debugging
-            status_details = workspace.get("status_details", {})
             meta = workspace.get("meta", {})
             render_info = meta.get("render", {})
-            rendered_text = render_info.get("text", "")
-            render_timestamp = render_info.get("ts", "")
-            logger.info(f"Render complete - Selected: '{selected_text[:50]}' | Rendered: '{rendered_text[:50]}'")
-            logger.info(f"Render timestamp: {render_timestamp}")
-            break
+            rendered_text = normalize_for_render(render_info.get("text", ""))
+            if rendered_text != selected_clean:
+                logger.info(
+                    "Render reported success but text mismatched (expected=%r, got=%r); awaiting updated render.",
+                    selected_clean,
+                    rendered_text,
+                )
+            else:
+                render_timestamp = render_info.get("ts", "")
+                logger.info(
+                    "Render complete - Selected: '%s' | Rendered: '%s'",
+                    selected_text[:50],
+                    rendered_text[:50],
+                )
+                logger.info(f"Render timestamp: {render_timestamp}")
+                break
         elif render_status == "failed":
             await reply_text_with_retry(message, "❌ Video rendering failed. Please try again.")
             return ConversationHandler.END
