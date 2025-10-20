@@ -117,6 +117,15 @@ def _resolve_render_text_context(meta: Dict[str, Any], template_id: Optional[str
     base_text is assumed to be normalized for rendering.
     """
     top_enabled, bottom_enabled = _template_text_flags(template_id)
+    
+    # NEW: Check for fixed bottom text in template config
+    cfg = _load_template_config(template_id)
+    fixed_bottom = None
+    if cfg and bottom_enabled:
+        fixed_bottom = cfg.get("bottom_text", {}).get("fixed_value")
+        if fixed_bottom:
+            fixed_bottom = clean_text_for_render(normalize_dashes(fixed_bottom))
+    
     dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
 
     def _clean(value: Optional[str]) -> str:
@@ -127,13 +136,20 @@ def _resolve_render_text_context(meta: Dict[str, Any], template_id: Optional[str
     if top_enabled and bottom_enabled:
         top_text = ""
         bottom_text = ""
-        if isinstance(dual_meta, dict):
-            top_text = _clean(dual_meta.get("top_text"))
-            bottom_text = _clean(dual_meta.get("bottom_text"))
-        if not top_text:
-            top_text = base_text
-        if not bottom_text:
-            bottom_text = base_text
+        
+        # NEW: Use fixed bottom if available
+        if fixed_bottom:
+            bottom_text = fixed_bottom
+            top_text = base_text  # User's choice goes to top
+        else:
+            # Original dual text logic
+            if isinstance(dual_meta, dict):
+                top_text = _clean(dual_meta.get("top_text"))
+                bottom_text = _clean(dual_meta.get("bottom_text"))
+            if not top_text:
+                top_text = base_text
+            if not bottom_text:
+                bottom_text = base_text
     elif top_enabled:
         top_text = base_text
         bottom_text = ""
@@ -150,6 +166,7 @@ def _resolve_render_text_context(meta: Dict[str, Any], template_id: Optional[str
                 "text": base_text,
                 "top": top_text if top_enabled else "",
                 "bottom": bottom_text if bottom_enabled else "",
+                "fixed_bottom": fixed_bottom or "",  # NEW: Include in hash
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -483,7 +500,16 @@ def ensure_ocr(ws: Path, regen_ai_only: bool = False):
                             "source": source
                         })
 
-                    if top_enabled and bottom_enabled and template_id:
+                                        # NEW: Check if bottom text is fixed in template config
+                    cfg = _load_template_config(template_id)
+                    skip_dual_generation = False
+                    if cfg and top_enabled and bottom_enabled:
+                        fixed_bottom = cfg.get("bottom_text", {}).get("fixed_value")
+                        if fixed_bottom:
+                            skip_dual_generation = True
+                            logger.info("dual_text: skipping generation in OCR (bottom_text is fixed)")
+
+                    if top_enabled and bottom_enabled and template_id and not skip_dual_generation:
                         dual_downloader_caption = (
                             result.get("manual_caption")
                             or result.get("ocr_caption")
@@ -853,8 +879,19 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
 
     text_value = clean_text_for_render(raw_text)
     
+    # dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
     dual_meta = meta.get("dual_text") if isinstance(meta, dict) else {}
-    if top_enabled and bottom_enabled:
+
+    # NEW: Check if bottom text is fixed in template config
+    cfg = _load_template_config(effective_template_id)
+    skip_dual_generation = False
+    if cfg and top_enabled and bottom_enabled:
+        fixed_bottom = cfg.get("bottom_text", {}).get("fixed_value")
+        if fixed_bottom:
+            skip_dual_generation = True
+            logger.info("dual_text: skipping generation in render (bottom_text is fixed)")
+
+    if top_enabled and bottom_enabled and not skip_dual_generation:
         need_refresh = True
         if isinstance(dual_meta, dict):
             top_ready = bool(dual_meta.get("top_text"))
@@ -894,6 +931,7 @@ def ensure_render(ws: Path, template_id: Optional[str] = None, force_refresh: bo
             write_meta(ws, meta)
     else:
         dual_meta = {}
+    
     render_ctx = _resolve_render_text_context(meta, effective_template_id, text_value)
     text_hash = render_ctx["hash"]
     top_text_for_renderer = render_ctx["top_text"]

@@ -75,3 +75,123 @@
 2025-10-12 23:48:05,751 orchestrator INFO render call workspace=DLpUZRqNUEu template=advanced_template top='Beauty is more than skin deep in motherhood' bottom='Remind her of her inner strength and outer beauty always matters'
 2025-10-12 23:48:05,751 templates.advanced_template INFO advanced_template render call top='Beauty is more than skin deep in motherhood' bottom='Remind her of her inner strength and outer beauty always matters'
 2025-10-12 23:57:58,265 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id advanced_template --emit-json-workspace D:\Temp\tmpku5jx3un.json
+2025-10-13 08:52:38,176 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-1HsXEl-r/?igsh=MXhmbnRjazFjcHN1aA== --template-id advanced_template --emit-json-workspace D:\Temp\tmpfhb73jb9.json
+2025-10-13 08:53:03,340 __main__ INFO dual_text: generating overlay copy workspace=DO-1HsXEl-r template=advanced_template key_present=True
+2025-10-13 08:53:03,828 __main__ INFO dual_text: result status=success source=groq_dual_text top="THEY MAY NEVER SAY IT, BUT WE KNOW THEIR DIWALI IS INCOMPLETE WITHOUT US The family picture looks lit up with everyone's smiles," bottom='Bring joy and love to their festive celebrations with us' notes=['TOP_TEXT: shorter than 5 words, fallback applied.']
+2025-10-13 08:53:36,326 orchestrator INFO dual_text: generating overlay copy workspace=DO-1HsXEl-r template=advanced_template key_present=True
+2025-10-13 08:53:37,284 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Diwali is incomplete without us' bottom='Bring joy to their celebrations with our special gifts' notes=[]
+2025-10-13 08:53:37,318 orchestrator INFO render call workspace=DO-1HsXEl-r template=advanced_template top='Diwali is incomplete without us' bottom='Bring joy to their celebrations with our special gifts'
+2025-10-13 08:53:37,318 templates.advanced_template INFO advanced_template render call top='Diwali is incomplete without us' bottom='Bring joy to their celebrations with our special gifts'
+2025-10-13 09:03:05,082 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPt8JN_EnW6/?igsh=dnU0cTYza2gzZ25w --template-id marketing_spots --emit-json-workspace D:\Temp\tmpxkejrd6w.json
+2025-10-13 09:03:59,120 orchestrator INFO render call workspace=DPt8JN_EnW6 template=marketing_spots top='When pop royalty meets hip-hop swag in Apple Music ads.' bottom=None
+2025-10-13 09:09:00,110 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPt8JN_EnW6/?igsh=dnU0cTYza2gzZ25w --template-id IIA --emit-json-workspace D:\Temp\tmpx7f1euzl.json
+2025-10-13 09:09:17,381 api.tasks INFO Cleared render cache for workspace DPt8JN_EnW6
+2025-10-13 09:09:36,296 orchestrator INFO dual_text: generating overlay copy workspace=DPt8JN_EnW6 template=IIA key_present=True
+2025-10-13 09:09:37,244 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Taylor Swift and Drake Team Up' bottom='Watch their iconic Apple Music commercial collaboration now online' notes=[]
+2025-10-13 09:09:37,273 orchestrator INFO render call workspace=DPt8JN_EnW6 template=IIA top='Taylor Swift and Drake Team Up' bottom='Watch their iconic Apple Music commercial collaboration now online'
+2025-10-13 09:09:37,273 templates.advanced_template INFO advanced_template render call top='Taylor Swift and Drake Team Up' bottom='Watch their iconic Apple Music commercial collaboration now online'
+2025-10-13 11:09:19,995 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPJM-f0D9Ub/?igsh=MTRjbzRlZ2ppOGV4MA== --template-id IIA --emit-json-workspace D:\Temp\tmp5kz9nbpj.json
+2025-10-13 11:09:53,090 __main__ INFO dual_text: generating overlay copy workspace=DPJM-f0D9Ub template=IIA key_present=True
+2025-10-13 11:09:53,475 __main__ INFO dual_text: result status=success source=groq_dual_text top='Ultimate fusion of style and status' bottom='Experience the coolest collaboration that redefined fashion and status forever' notes=[]
+2025-10-13 11:13:10,445 orchestrator INFO dual_text: generating overlay copy workspace=DPJM-f0D9Ub template=IIA key_present=True
+2025-10-13 11:13:11,244 orchestrator INFO dual_text: result status=success source=groq_dual_text top="2008's coolest collab is back" bottom='Experience the iconic style that still influences fashion today instantly' notes=[]
+2025-10-13 11:13:11,286 orchestrator INFO render call workspace=DPJM-f0D9Ub template=IIA top="2008's coolest collab is back" bottom='Experience the iconic style that still influences fashion today instantly'
+2025-10-13 11:13:11,286 templates.advanced_template INFO advanced_template render call top="2008's coolest collab is back" bottom='Experience the iconic style that still influences fashion today instantly'
+2025-10-13 11:15:52,995 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DJE2zkNSTKw/?igsh=eWMwNWprdnlzMW93 --template-id IIA --emit-json-workspace D:\Temp\tmpqdtj6ke5.json
+2025-10-13 11:16:22,126 __main__ INFO dual_text: generating overlay copy workspace=DJE2zkNSTKw template=IIA key_present=True
+2025-10-13 11:16:22,937 __main__ INFO dual_text: result status=success source=groq_dual_text top='Unbox the magic of 2012' bottom='Discover the surprise and joy of a colour changing panda inside' notes=[]
+2025-10-13 11:21:22,740 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DJE2zkNSTKw/?igsh=eWMwNWprdnlzMW93 --template-id IIA --emit-json-workspace D:\Temp\tmp8yh460rf.json
+2025-10-13 11:21:56,253 orchestrator INFO dual_text: generating overlay copy workspace=DJE2zkNSTKw template=IIA key_present=True
+2025-10-13 11:21:57,017 orchestrator INFO dual_text: result status=success source=groq_dual_text top='Colour changing panda from Cadbury Gems' bottom='Relive the nostalgia and win a surprise ball today instantly' notes=[]
+2025-10-13 11:21:57,047 orchestrator INFO render call workspace=DJE2zkNSTKw template=IIA top='Colour changing panda from Cadbury Gems' bottom='Relive the nostalgia and win a surprise ball today instantly'
+2025-10-13 11:21:57,048 templates.advanced_template INFO advanced_template render call top='Colour changing panda from Cadbury Gems' bottom='Relive the nostalgia and win a surprise ball today instantly'
+2025-10-13 11:24:09,973 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPuBe7WEmT2/?igsh=MWNpOHVmM2R0eTFsdw== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpbmtpe14p.json
+2025-10-13 11:24:53,728 orchestrator INFO render call workspace=DPuBe7WEmT2 template=marketing_spots top="McDonald's: where innovation meets nostalgia, creating timeless cravings." bottom=None
+2025-10-13 11:40:38,114 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPJM-f0D9Ub/?igsh=MTRjbzRlZ2ppOGV4MA== --template-id IIA --emit-json-workspace D:\Temp\tmpgcqkwo6w.json
+2025-10-13 11:40:52,328 api.tasks INFO Cleared render cache for workspace DPJM-f0D9Ub
+2025-10-13 11:41:06,630 orchestrator INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-13 11:41:06,641 orchestrator INFO render call workspace=DPJM-f0D9Ub template=IIA top="The crown jewel of 2008 collabs: Pepsi's 'Youngistan' campaign" bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 11:41:06,641 templates.advanced_template INFO advanced_template render call top="The crown jewel of 2008 collabs: Pepsi's 'Youngistan' campaign" bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 11:50:25,541 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPJM-f0D9Ub/?igsh=MTRjbzRlZ2ppOGV4MA== --template-id IIA --emit-json-workspace D:\Temp\tmpu4zesd4a.json
+2025-10-13 11:50:41,251 api.tasks INFO Cleared render cache for workspace DPJM-f0D9Ub
+2025-10-13 11:50:53,568 orchestrator INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-13 11:50:53,580 orchestrator INFO dual_text: skipping generation in render (bottom_text is fixed)
+2025-10-13 11:50:53,580 orchestrator INFO render call workspace=DPJM-f0D9Ub template=IIA top="Pepsi's 2008 campaign: the ultimate youth anthem." bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 11:50:53,580 templates.advanced_template INFO advanced_template render call top="Pepsi's 2008 campaign: the ultimate youth anthem." bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 11:59:50,218 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPJM-f0D9Ub/?igsh=MTRjbzRlZ2ppOGV4MA== --template-id LOM --emit-json-workspace D:\Temp\tmp5hl5qvle.json
+2025-10-13 12:00:55,255 api.tasks INFO Cleared render cache for workspace DPJM-f0D9Ub
+2025-10-13 12:01:12,941 orchestrator INFO render call workspace=DPJM-f0D9Ub template=LOM top=None bottom=None
+2025-10-13 12:03:07,005 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPJM-f0D9Ub/?igsh=MTRjbzRlZ2ppOGV4MA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpuyvbblvy.json
+2025-10-13 12:03:57,470 api.tasks INFO Cleared render cache for workspace DPJM-f0D9Ub
+2025-10-13 12:04:22,576 orchestrator INFO render call workspace=DPJM-f0D9Ub template=marketing_spots top="Peak refreshment: the 'Youngistan' campaign takes the stage" bottom=None
+2025-10-13 12:31:54,358 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMFQMzZN4ua/?igsh=ZmNndXJvZzNvZDV2 --template-id marketing_spots --emit-json-workspace D:\Temp\tmp3u54v1im.json
+2025-10-13 12:32:58,715 orchestrator INFO render call workspace=DMFQMzZN4ua template=marketing_spots top='Peak: Reach new heights with our stress-relief techniques.' bottom=None
+2025-10-13 12:37:18,017 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DKUa7_PPeZb/?igsh=MWJuZ3R0b2tkdGs5aw== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpbdrertv7.json
+2025-10-13 12:38:02,646 orchestrator INFO render call workspace=DKUa7_PPeZb template=marketing_spots top="Win the future with Nike's bold, unlimited possibilities." bottom=None
+2025-10-13 14:27:53,270 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLpUZRqNUEu/?igsh=b3l5b3lqMXNiZGE= --template-id marketing_spots --emit-json-workspace D:\Temp\tmp2wqadk48.json
+2025-10-13 14:38:29,073 api.tasks INFO Cleared render cache for workspace DLpUZRqNUEu
+2025-10-13 14:38:52,976 orchestrator INFO render call workspace=DLpUZRqNUEu template=marketing_spots top="You're not invisible, you're just multitasking." bottom=None
+2025-10-13 15:08:10,717 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/p/DPor3ouk0BG/?igsh=dzRjYWg5MDIxbHFw --template-id marketing_spots --emit-json-workspace D:\Temp\tmpx6txg0yb.json
+2025-10-13 15:11:22,355 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/p/DPor3ouk0BG/?igsh=dzRjYWg5MDIxbHFw --template-id marketing_spots --emit-json-workspace D:\Temp\tmpduprbr2n.json
+2025-10-13 15:14:09,750 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/p/DPor3ouk0BG/?igsh=dzRjYWg5MDIxbHFw --template-id marketing_spots --emit-json-workspace D:\Temp\tmp4y35m0hn.json
+2025-10-13 15:44:55,336 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DNzB32X3Dm5/?igsh=MTRwMTZ1ODM1djl6 --template-id marketing_spots --emit-json-workspace D:\Temp\tmp51akphlp.json
+2025-10-13 15:46:31,436 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DOTXscpiX4i/?igsh=MXkwbDVpN3E4cnZ1dg== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp19pexymw.json
+2025-10-13 15:47:07,028 api.tasks INFO Cleared render cache for workspace DOTXscpiX4i
+2025-10-13 15:47:22,655 orchestrator INFO render call workspace=DOTXscpiX4i template=marketing_spots top='Marketing magic happens with a raise for our team' bottom=None
+2025-10-13 15:49:11,841 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DOTXscpiX4i/?igsh=MXkwbDVpN3E4cnZ1dg== --template-id LOM --emit-json-workspace D:\Temp\tmp2ugyzwbq.json
+2025-10-13 15:49:26,922 api.tasks INFO Cleared render cache for workspace DOTXscpiX4i
+2025-10-13 15:49:37,922 orchestrator INFO render call workspace=DOTXscpiX4i template=LOM top=None bottom=None
+2025-10-13 16:54:09,915 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-WLhnjFLo/?igsh=cGxneTc4aWd5NDZ3 --template-id marketing_spots --emit-json-workspace D:\Temp\tmpamy0phas.json
+2025-10-13 17:44:57,433 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-WLhnjFLo/?igsh=cGxneTc4aWd5NDZ3 --template-id marketing_spots --emit-json-workspace D:\Temp\tmptpm3nnez.json
+2025-10-13 17:50:30,090 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-WLhnjFLo/?igsh=cGxneTc4aWd5NDZ3 --template-id marketing_spots --emit-json-workspace D:\Temp\tmp539xnnaz.json
+2025-10-13 17:52:55,942 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-WLhnjFLo/?igsh=cGxneTc4aWd5NDZ3 --template-id IIA --emit-json-workspace D:\Temp\tmpk6mce361.json
+2025-10-13 17:57:59,849 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO-WLhnjFLo/?igsh=cGxneTc4aWd5NDZ3 --template-id LOM --emit-json-workspace D:\Temp\tmpxshyl700.json
+2025-10-13 17:59:02,870 orchestrator INFO render call workspace=DO-WLhnjFLo template=LOM top=None bottom=None
+2025-10-13 18:42:24,700 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPHh2ZNk44I/?igsh=aWNkbjhucXpiN2xk --template-id marketing_spots --emit-json-workspace D:\Temp\tmpvmree4o2.json
+2025-10-13 18:43:28,279 orchestrator INFO render call workspace=DPHh2ZNk44I template=marketing_spots top='The secret to success lies within this budget.' bottom=None
+2025-10-13 19:39:26,588 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DO1A-Elk3DH/?igsh=MW4wYmtmaWUxbnI4OQ== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp06jz2fue.json
+2025-10-13 19:44:39,295 orchestrator INFO render call workspace=DO1A-Elk3DH template=marketing_spots top="The absurd truth about breast cancer: it's preventable." bottom=None
+2025-10-13 23:33:20,729 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/p/DPUDhGYEmvG/?igsh=MTNnZW1iNmIxOXg1Zg== --template-id advanced_template --emit-json-workspace D:\Temp\tmpn2ohi648.json
+2025-10-13 23:34:13,727 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DL4GNJwo7F_/?igsh=cGdyd3d5N2x5czlm --template-id IIA --emit-json-workspace D:\Temp\tmp8k58w7xj.json
+2025-10-13 23:34:40,385 __main__ INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-13 23:36:08,868 orchestrator INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-13 23:36:08,879 orchestrator INFO dual_text: skipping generation in render (bottom_text is fixed)
+2025-10-13 23:36:08,881 orchestrator INFO render call workspace=DL4GNJwo7F_ template=IIA top="When you finally understand you're wrong and apologize" bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 23:36:08,881 templates.advanced_template INFO advanced_template render call top="When you finally understand you're wrong and apologize" bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-13 23:37:33,706 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLgCZKfIbal/?igsh=MWk3NTQ3dnlhbWhubA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp_6l4l03l.json
+2025-10-13 23:41:49,183 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMkLE4KRrQl/?igsh=MTNqNWhma2VsOTQzbw== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp3yipg3b3.json
+2025-10-14 17:23:44,084 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPijjIwklGJ/?igsh=eDNscGpudDEzYmQ= --template-id marketing_spots --emit-json-workspace D:\Temp\tmpzevcss84.json
+2025-10-14 17:58:44,781 orchestrator INFO render call workspace=DPijjIwklGJ template=marketing_spots top="Marketing's the trophy, sales is just the participation award." bottom=None
+2025-10-14 18:07:22,534 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPq1b1NjO0Q/?igsh=M2V2OHJ6ZDh0dDhl --template-id marketing_spots --emit-json-workspace D:\Temp\tmp0_rz8v6c.json
+2025-10-14 18:09:07,141 orchestrator INFO render call workspace=DPq1b1NjO0Q template=marketing_spots top='The most brilliant way to save lives on the road' bottom=None
+2025-10-14 18:18:50,271 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPwNuiwDAWM/?igsh=MWU0ZGtkem5vbjdjMA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpd72npxa6.json
+2025-10-14 18:19:34,627 orchestrator INFO render call workspace=DPwNuiwDAWM template=marketing_spots top='Festival magic happens when you least expect it' bottom=None
+2025-10-14 19:08:05,721 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPvow85D23u/?igsh=MXZnMThseWIyaHNx --template-id IIA --emit-json-workspace D:\Temp\tmpwrwzar3j.json
+2025-10-14 19:08:31,374 __main__ INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-14 19:08:59,010 orchestrator INFO dual_text: skipping generation in OCR (bottom_text is fixed)
+2025-10-14 19:08:59,029 orchestrator INFO dual_text: skipping generation in render (bottom_text is fixed)
+2025-10-14 19:08:59,030 orchestrator INFO render call workspace=DPvow85D23u template=IIA top='Get ready for the most epic kid performance ever.' bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-14 19:08:59,031 templates.advanced_template INFO advanced_template render call top='Get ready for the most epic kid performance ever.' bottom='If only there was a page dedicated to Iconic Ads'
+2025-10-15 19:59:14,892 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPyDcjkk0Hh/?igsh=cXYxNDNqam1sNGYz --template-id marketing_spots --emit-json-workspace D:\Temp\tmp_u9fbx44.json
+2025-10-15 20:04:12,082 orchestrator INFO render call workspace=DPyDcjkk0Hh template=marketing_spots top="Urban Company's Massage Waali Didi is challenging the status quo." bottom=None
+2025-10-16 01:44:22,466 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DNyDxxFXoOj/?igsh=MXI0aTFqM3dob2dhcQ== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp71ycxr3r.json
+2025-10-16 01:46:26,058 orchestrator INFO render call workspace=DNyDxxFXoOj template=marketing_spots top='Marketing magic happens, and so do raises' bottom=None
+2025-10-16 01:48:40,011 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPvpQ-ak27I/?igsh=MWFjYWZreDFjZHN6eg== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp0_z4xjxt.json
+2025-10-16 01:49:54,240 orchestrator INFO render call workspace=DPvpQ-ak27I template=marketing_spots top='A Diwali Story That Will Make You Smile' bottom=None
+2025-10-16 01:53:53,816 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPoWRAODu4r/?igsh=MTEycmQzcXlpNmRmOQ== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpl4uttzdw.json
+2025-10-16 01:55:12,999 orchestrator INFO render call workspace=DPoWRAODu4r template=marketing_spots top="Disney's best commercial ever will leave you spellbound." bottom=None
+2025-10-16 18:09:59,066 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DP3Zq7WE6zj/?utm_source=ig_web_copy_link --template-id marketing_spots --emit-json-workspace D:\Temp\tmpfx6gs4pm.json
+2025-10-16 18:10:58,059 orchestrator INFO render call workspace=DP3Zq7WE6zj template=marketing_spots top="Coming home means more than any present you'd buy." bottom=None
+2025-10-16 18:12:54,258 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPsy4gTE-3Y/?utm_source=ig_web_copy_link --template-id marketing_spots --emit-json-workspace D:\Temp\tmpnlgi08eu.json
+2025-10-16 18:28:45,432 orchestrator INFO render call workspace=DPsy4gTE-3Y template=marketing_spots top='Effective marketing is like a ghost, invisible yet powerful.' bottom=None
+2025-10-16 18:42:15,735 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPve4xGgs_q/?igsh=MTF5eXpjNHN3NTJmeg== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpncqprne_.json
+2025-10-16 20:40:20,171 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DOvkTKDEkFZ/?igsh=empnOXc4ZDFramt1 --template-id marketing_spots --emit-json-workspace D:\Temp\tmpa41oa0rg.json
+2025-10-16 20:41:04,985 orchestrator INFO render call workspace=DOvkTKDEkFZ template=marketing_spots top='The on-screen banter between Akshay Kumar and Archana is hilarious.' bottom=None
+2025-10-17 18:21:01,585 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DP1OVgLk9Is/?igsh=YTQ4ZDV4bjM5bDFj --template-id marketing_spots --emit-json-workspace D:\Temp\tmp_cs29gcp.json
+2025-10-17 18:23:43,553 orchestrator INFO render call workspace=DP1OVgLk9Is template=marketing_spots top='Peak Diwali: where work and family come together in joy.' bottom=None
+2025-10-17 18:29:50,780 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPfbQC-Ez1a/?igsh=MTUzemptbG5xcmV2bA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmptr3bj48a.json
+2025-10-17 18:41:44,478 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DPfbQC-Ez1a/?igsh=MTUzemptbG5xcmV2bA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmpoqm67i83.json
+2025-10-17 18:42:47,623 orchestrator INFO render call workspace=DPfbQC-Ez1a template=marketing_spots top="Chef's kiss for this marketing idea, and a raise." bottom=None
+2025-10-17 18:49:36,146 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DOaTBdtjP-d/?igsh=amV1Y2w5aGRva3Nn --template-id marketing_spots --emit-json-workspace D:\Temp\tmpfv_y1faj.json
+2025-10-17 18:50:27,973 orchestrator INFO render call workspace=DOaTBdtjP-d template=marketing_spots top="The world's largest speed bump, crushed by a Range Rover." bottom=None
+2025-10-20 17:01:22,741 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQBaWTkEZ2U/?igsh=ZjN4MHhkaWZ1Y2R5 --template-id marketing_spots --emit-json-workspace D:\Temp\tmpy2jqv7h7.json
