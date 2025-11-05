@@ -1,8 +1,8 @@
 """
-template_engine.py - ONE-PASS VERSION
+template_engine.py - ONE-PASS VERSION + FRAGMENTED TEXT SUPPORT
 - Single FFmpeg pass for canvas + logo overlays
 - Canvas never written to disk (piped via stdin)
-- Final video is the only file saved
+- NEW: Fragmented text coloring via fragatext_system integration
 """
 
 from dataclasses import dataclass
@@ -19,11 +19,22 @@ import shlex
 import os
 import math
 import logging
-from typing import Tuple, List, Optional, Dict
+import sys
+from typing import Tuple, List, Optional, Dict, Any
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+# Import fragatext if available
+try:
+    if str(BASE_DIR) not in sys.path:
+        sys.path.insert(0, str(BASE_DIR))
+    from fragatext_system import FermentExtractor
+    FRAGATEXT_AVAILABLE = True
+except ImportError:
+    FRAGATEXT_AVAILABLE = False
+    FermentExtractor = None
 
 api_key = os.getenv("GROQ_API_KEY", "").strip()
 
@@ -41,7 +52,7 @@ if not logger.handlers:
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
-# Encoding settings (unchanged, still production-friendly)
+# Encoding settings
 PRODUCTION_VIDEO_ENCODING = (
     "-c:v libx264 "
     "-crf 18 "
@@ -421,6 +432,134 @@ def draw_text_with_color_highlight(
             space_width = font.getlength(' ') if word_idx < len(words) - 1 else 0
             cursor_x += word_width + space_width
 
+# ---------- NEW: Fragmented Text Support ----------
+
+def call_fragatext(text: str, api_key: str) -> Optional[Dict[str, Any]]:
+    """Call fragatext_system to get highlighted fragments."""
+    if not FRAGATEXT_AVAILABLE:
+        logger.warning("fragatext_system not available - falling back to standard highlighting")
+        return None
+    
+    if not api_key:
+        logger.warning("GROQ_API_KEY missing for fragatext")
+        return None
+    
+    try:
+        extractor = FermentExtractor(api_key=api_key)
+        result = extractor.extract(text)
+        logger.info(f"fragatext: extracted {len(result.get('fragments', []))} fragments")
+        return result
+    except Exception as exc:
+        logger.warning(f"fragatext extraction failed: {exc}")
+        return None
+
+def map_fragments_to_words(
+    text: str,
+    fragments: List[Dict[str, Any]],
+    lines: List[str]
+) -> List[Tuple[int, int, float]]:
+    """
+    Map fragment character positions to (line_idx, word_idx, importance) tuples.
+    
+    Returns list of (line_idx, word_idx, importance) for highlighting.
+    """
+    # Build word position map
+    word_positions = []
+    char_pos = 0
+    for line_idx, line in enumerate(lines):
+        words = line.split()
+        for word_idx, word in enumerate(words):
+            start = text.find(word, char_pos)
+            if start != -1:
+                end = start + len(word)
+                word_positions.append((line_idx, word_idx, start, end, word))
+                char_pos = end
+    
+    # Map fragments to words
+    highlighted_words = []
+    for frag in fragments:
+        frag_start = frag.get("start", 0)
+        frag_end = frag.get("end", 0)
+        importance = frag.get("importance", 0.5)
+        
+        for line_idx, word_idx, word_start, word_end, word_text in word_positions:
+            # Check if word overlaps with fragment
+            if not (word_end <= frag_start or word_start >= frag_end):
+                highlighted_words.append((line_idx, word_idx, importance))
+    
+    return highlighted_words
+
+def get_importance_color(importance: float, base_color: str, highlight_color: str) -> str:
+    """Interpolate color based on importance (0.0 = base, 1.0 = highlight)."""
+    if importance >= 0.9:
+        return highlight_color
+    elif importance >= 0.7:
+        # High importance - full highlight
+        return highlight_color
+    elif importance >= 0.5:
+        # Medium importance - blend
+        return highlight_color
+    else:
+        # Low importance - base color
+        return base_color
+
+def draw_fragmented_text(
+    draw: ImageDraw.Draw,
+    lines: List[str],
+    font: ImageFont.FreeTypeFont,
+    x_origin: int,
+    y_origin: int,
+    highlighted_words: List[Tuple[int, int, float]],
+    base_color: str,
+    highlight_color: str,
+    line_origins: Optional[List[int]] = None,
+    line_positions: Optional[List[int]] = None,
+    line_height: Optional[int] = None,
+    line_step: Optional[int] = None,
+):
+    """Draw text with fragmented highlighting based on importance."""
+    line_height = line_height or get_line_height(font)
+    line_step = line_step or max(1, line_height)
+    
+    if line_positions is None:
+        line_positions = []
+        current_y = y_origin
+        for idx in range(len(lines)):
+            line_positions.append(current_y)
+            if idx < len(lines) - 1:
+                current_y += line_step
+    
+    # Build highlight map
+    highlight_map = {}
+    for line_idx, word_idx, importance in highlighted_words:
+        key = (line_idx, word_idx)
+        # Keep highest importance if word appears in multiple fragments
+        if key not in highlight_map or importance > highlight_map[key]:
+            highlight_map[key] = importance
+    
+    # Draw text with colors
+    for line_idx, line in enumerate(lines):
+        line_top = line_positions[line_idx] if line_idx < len(line_positions) else y_origin
+        words = line.split()
+        cursor_x = (
+            line_origins[line_idx]
+            if line_origins and line_idx < len(line_origins)
+            else x_origin
+        )
+        
+        for word_idx, word in enumerate(words):
+            key = (line_idx, word_idx)
+            if key in highlight_map:
+                importance = highlight_map[key]
+                color = get_importance_color(importance, base_color, highlight_color)
+            else:
+                color = base_color
+            
+            draw.text((cursor_x, line_top), word, font=font, fill=color)
+            word_width = font.getlength(word)
+            space_width = font.getlength(' ') if word_idx < len(words) - 1 else 0
+            cursor_x += word_width + space_width
+
 # ---------- Core engine ----------
 
 @dataclass
@@ -562,7 +701,6 @@ class TemplateEngine:
                 logger.warning(f"Logo file not found at {logo_path}, proceeding without logo.")
                 logo_enabled = False
             else:
-                # Decide size
                 sz = logo_cfg.get("size", {})
                 target_w = sz.get("width")
                 target_h = sz.get("height")
@@ -572,7 +710,6 @@ class TemplateEngine:
                     target_h = int(target_h)
 
                 rotation_deg = int(logo_cfg.get("rotation", 0))
-                # Positioning
                 position_mode = logo_cfg.get("position_mode", "canvas")
                 if position_mode == "video":
                     video_relative = logo_cfg.get("video_relative", {})
@@ -587,7 +724,6 @@ class TemplateEngine:
                         lx = int(pos.get("x", margin))
                         ly = int(pos.get("y", margin))
                     elif pos == "top-right":
-                        # We’ll fill target_w/target_h later (safe defaults here)
                         lw = target_w if target_w else 0
                         lx = canvas_w - lw - margin
                         ly = margin
@@ -600,46 +736,28 @@ class TemplateEngine:
                         lx = canvas_w - lw - margin
                         ly = canvas_h - lh - margin
                     else:
-                        # bottom-left
                         lh = target_h if target_h else 0
                         lx = margin
                         ly = canvas_h - lh - margin
 
-                # If target size was not specified, we can compute basic bounds by probing image
-                # But we will let ffmpeg scale only if provided; otherwise native size is used.
                 logo_input_path = str(logo_path)
 
         # Build FFmpeg filter graph
-        # Inputs:
-        #   [0:v] canvas (PNG from stdin)
-        #   [1:v][1:a?] input video
-        #   [2:v] logo (optional)
-        #
-        # Steps:
-        #   [1:v] scale to vw:-2 -> [vid]
-        #   overlay canvas + vid at (vx,vy) -> [base]
-        #   if logo: optionally scale/rotate logo -> [lg]; overlay [base][lg] at (lx,ly) -> [outv]
-        #   else: [outv]=[base]
         base_opts = "-hide_banner -loglevel warning -loop 1"
 
-        # scale video step
         filter_steps = [f"[1:v]scale={vw}:-2[vid]"]
-        # overlay video on canvas
         filter_steps.append(f"[0:v][vid]overlay={vx}:{vy}:format=yuv420:shortest=1[base]")
 
-        # logo branch
         if logo_enabled:
             lg_in = "[2:v]"
             lg_cur = "lg0"
 
             lg_chain = []
-            # scale if both or either dimension is supplied
             if target_w and target_h:
                 lg_chain.append(f"{lg_in}scale={target_w}:{target_h}[{lg_cur}]")
                 lg_in = f"[{lg_cur}]"
                 lg_cur = "lg1"
             elif target_w and not target_h:
-                # preserve aspect using width only
                 lg_chain.append(f"{lg_in}scale={target_w}:-1[{lg_cur}]")
                 lg_in = f"[{lg_cur}]"
                 lg_cur = "lg1"
@@ -648,48 +766,41 @@ class TemplateEngine:
                 lg_in = f"[{lg_cur}]"
                 lg_cur = "lg1"
 
-            # rotate if needed
             if rotation_deg != 0:
                 radians = rotation_deg * math.pi / 180.0
-                # c=none to keep alpha; ow/oh auto via rotw/roth
                 lg_chain.append(f"{lg_in}rotate=a={radians}:c=none:ow=rotw(iw):oh=roth(ih)[{lg_cur}]")
                 lg_in = f"[{lg_cur}]"
                 lg_cur = "lg2"
 
             if not lg_chain:
-                # no transforms; just alias into a label
                 lg_chain.append(f"{lg_in}copy[lg]")
                 lg_label = "[lg]"
             else:
                 lg_label = f"[{lg_in.strip('[]')}]"
-            # If last label isn't [lg], relabel consistently
             if lg_label != "[lg]":
                 lg_chain.append(f"{lg_label}copy[lg]")
 
             filter_steps.extend(lg_chain)
-            # final overlay with logo
             filter_steps.append(f"[base][lg]overlay={lx}:{ly}:format=auto[outv]")
         else:
-            # no logo
             filter_steps.append(f"[base]copy[outv]")
 
         filter_complex = ";".join(filter_steps)
 
-        # Build command
         cmd = [
             "ffmpeg", "-y"
         ] + shlex.split(base_opts) + [
-            "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",                   # canvas via stdin
-            "-i", self.request.input_video_path              # video file
+            "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
+            "-i", self.request.input_video_path
         ]
 
         if logo_enabled and logo_input_path:
-            cmd += ["-i", logo_input_path]                   # logo file
+            cmd += ["-i", logo_input_path]
 
         cmd += [
             "-filter_complex", filter_complex,
             "-map", "[outv]",
-            "-map", "1:a?",                                  # copy/encode audio from input video if present
+            "-map", "1:a?",
         ] + shlex.split(PRODUCTION_VIDEO_ENCODING) + [
         ] + shlex.split(PRODUCTION_AUDIO_ENCODING) + [
             self.request.output_video_path
@@ -697,7 +808,6 @@ class TemplateEngine:
 
         logger.debug("FFmpeg command:\n" + " ".join(shlex.quote(x) for x in cmd))
         try:
-            # Pipe canvas PNG bytes into ffmpeg stdin
             proc = subprocess.run(cmd, input=canvas_bytes.getvalue(), capture_output=True)
             if proc.returncode != 0:
                 logger.error("FFmpeg failed:\nSTDERR:\n%s", proc.stderr.decode("utf-8", errors="ignore"))
@@ -706,7 +816,6 @@ class TemplateEngine:
             logger.error(f"FFmpeg execution failed: {exc}", exc_info=True)
             return False
 
-        # Validation
         output_path = Path(self.request.output_video_path)
         if not output_path.exists():
             logger.error("Output file not created")
@@ -793,49 +902,91 @@ class TemplateEngine:
         highlight_phrases = []
 
         if hl_cfg.get("enabled", False):
-            if hl_cfg.get("mode", "ai") == "manual":
-                manual_words = hl_cfg.get("manual_words", [])
-                highlight_phrases = parse_highlight_words(manual_words)
+            highlight_type = hl_cfg.get("type", "background")
+            
+            # NEW: Handle fragmented highlighting
+            if highlight_type == "fragmented":
+                logger.info("Using fragmented text highlighting")
+                fragatext_result = call_fragatext(render_text, api_key)
+                
+                if fragatext_result and fragatext_result.get("fragments"):
+                    fragments = fragatext_result["fragments"]
+                    highlighted_words = map_fragments_to_words(render_text, fragments, lines)
+                    
+                    text_color = txt_cfg.get("color", "#ffffff")
+                    highlight_color = hl_cfg.get("color", "#ffde59")
+                    
+                    draw_fragmented_text(
+                        draw,
+                        lines,
+                        font,
+                        x_origin,
+                        text_top,
+                        highlighted_words,
+                        text_color,
+                        highlight_color,
+                        line_origins=line_origins,
+                        line_positions=line_positions,
+                        line_height=line_height,
+                        line_step=line_step,
+                    )
+                else:
+                    # Fallback to standard rendering if fragatext fails
+                    logger.warning("Fragatext failed, falling back to standard rendering")
+                    text_color = txt_cfg.get("color", "#ffffff")
+                    for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+                        line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+                        draw.text((line_x, line_top), ln, font=font, fill=text_color)
             else:
-                top_k = int(hl_cfg.get("highlight_count", 3))
-                highlight_phrases = select_highlight_words_via_ai(render_text, top_k=top_k)
+                # Existing highlight logic for "background" and "color_word"
+                if hl_cfg.get("mode", "ai") == "manual":
+                    manual_words = hl_cfg.get("manual_words", [])
+                    highlight_phrases = parse_highlight_words(manual_words)
+                else:
+                    top_k = int(hl_cfg.get("highlight_count", 3))
+                    highlight_phrases = select_highlight_words_via_ai(render_text, top_k=top_k)
 
-        highlight_type = hl_cfg.get("type", "background")
-        text_color = txt_cfg.get("color", "#ffffff")
+                text_color = txt_cfg.get("color", "#ffffff")
 
-        if highlight_phrases and highlight_type == "background":
-            draw_highlights(
-                draw,
-                lines,
-                font,
-                x_origin,
-                text_top,
-                highlight_phrases,
-                hl_cfg.get("color", "#ffde59"),
-                line_origins=line_origins,
-                line_positions=line_positions,
-                line_height=line_height,
-                line_step=line_step,
-            )
-            for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
-                line_x = line_origins[idx] if idx < len(line_origins) else x_origin
-                draw.text((line_x, line_top), ln, font=font, fill=text_color)
-        elif highlight_phrases and highlight_type == "color_word":
-            draw_text_with_color_highlight(
-                draw,
-                lines,
-                font,
-                x_origin,
-                text_top,
-                highlight_phrases,
-                hl_cfg.get("color", "#ffde59"),
-                text_color,
-                line_origins=line_origins,
-                line_positions=line_positions,
-                line_height=line_height,
-                line_step=line_step,
-            )
+                if highlight_phrases and highlight_type == "background":
+                    draw_highlights(
+                        draw,
+                        lines,
+                        font,
+                        x_origin,
+                        text_top,
+                        highlight_phrases,
+                        hl_cfg.get("color", "#ffde59"),
+                        line_origins=line_origins,
+                        line_positions=line_positions,
+                        line_height=line_height,
+                        line_step=line_step,
+                    )
+                    for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+                        line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+                        draw.text((line_x, line_top), ln, font=font, fill=text_color)
+                elif highlight_phrases and highlight_type == "color_word":
+                    draw_text_with_color_highlight(
+                        draw,
+                        lines,
+                        font,
+                        x_origin,
+                        text_top,
+                        highlight_phrases,
+                        hl_cfg.get("color", "#ffde59"),
+                        text_color,
+                        line_origins=line_origins,
+                        line_positions=line_positions,
+                        line_height=line_height,
+                        line_step=line_step,
+                    )
+                else:
+                    for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
+                        line_x = line_origins[idx] if idx < len(line_origins) else x_origin
+                        draw.text((line_x, line_top), ln, font=font, fill=text_color)
         else:
+            # No highlighting - standard rendering
+            text_color = txt_cfg.get("color", "#ffffff")
             for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
                 line_x = line_origins[idx] if idx < len(line_origins) else x_origin
                 draw.text((line_x, line_top), ln, font=font, fill=text_color)

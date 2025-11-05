@@ -195,3 +195,8 @@
 2025-10-17 18:49:36,146 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DOaTBdtjP-d/?igsh=amV1Y2w5aGRva3Nn --template-id marketing_spots --emit-json-workspace D:\Temp\tmpfv_y1faj.json
 2025-10-17 18:50:27,973 orchestrator INFO render call workspace=DOaTBdtjP-d template=marketing_spots top="The world's largest speed bump, crushed by a Range Rover." bottom=None
 2025-10-20 17:01:22,741 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQBaWTkEZ2U/?igsh=ZjN4MHhkaWZ1Y2R5 --template-id marketing_spots --emit-json-workspace D:\Temp\tmpy2jqv7h7.json
+2025-11-06 01:00:59,762 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQZnWcYEXMi/?igsh=MWl0eWFuNzQxbjFtZA== --template-id marketing_spots --emit-json-workspace D:\Temp\tmp0rutqid4.json
+2025-11-06 01:01:00,714 __main__ WARNING No cached OCR text found; running full OCR.
+2025-11-06 01:01:30,827 api.tasks INFO Cleared render cache for workspace DQZnWcYEXMi
+2025-11-06 01:01:32,679 orchestrator INFO render call workspace=DQZnWcYEXMi template=marketing_spots top="Anything. Does it even matter anymore. It doesn't i guess" bottom=None
+2025-11-06 02:32:26,938 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DK7XufYNift/?igsh=cDQ0ZnJla2RzdHZh --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpti15mmko.json
