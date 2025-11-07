@@ -560,6 +560,65 @@ def draw_fragmented_text(
             space_width = font.getlength(' ') if word_idx < len(words) - 1 else 0
             cursor_x += word_width + space_width
 
+# ---------- Heuristic fragmented highlighting ----------
+
+def select_fragmented_highlights(
+    lines: List[str],
+    target_ratio: float = 0.45,
+) -> List[Tuple[int, int, float]]:
+    """
+    Heuristically choose words to highlight, targeting roughly 40-50% coverage.
+    Returns list of (line_idx, word_idx, importance).
+    """
+    target_ratio = max(0.3, min(0.5, target_ratio))
+    scored_words: List[Tuple[float, int, int]] = []
+
+    for line_idx, line in enumerate(lines):
+        words = line.split()
+        for word_idx, word in enumerate(words):
+            clean = re.sub(r"[^\w]", "", word)
+            if not clean:
+                continue
+            score = len(clean)
+            if word.isupper():
+                score += 2
+            if clean[0].isupper():
+                score += 1
+            if any(ch.isdigit() for ch in clean):
+                score += 1.5
+            if any(ch in "!?:;" for ch in word):
+                score += 0.5
+            scored_words.append((score, line_idx, word_idx))
+
+    total_words = len(scored_words)
+    if total_words == 0:
+        return []
+
+    target_count = max(1, int(round(total_words * target_ratio)))
+    if target_count >= total_words:
+        target_count = total_words
+
+    scored_words.sort(key=lambda x: x[0], reverse=True)
+    selected = scored_words[:target_count]
+
+    max_score = selected[0][0]
+    min_score = selected[-1][0]
+    denom = max(0.001, max_score - min_score)
+
+    highlights: List[Tuple[int, int, float]] = []
+    for score, line_idx, word_idx in selected:
+        importance = 0.5 + 0.5 * ((score - min_score) / denom)
+        importance = max(0.35, min(importance, 1.0))
+        highlights.append((line_idx, word_idx, importance))
+
+    return highlights
+
+def _ffmpeg_quote(path: Path) -> str:
+    posix = path.as_posix()
+    posix = posix.replace(":", r"\:")
+    posix = posix.replace("'", r"\'")
+    return f"'{posix}'"
+
 # ---------- Core engine ----------
 
 @dataclass
@@ -619,43 +678,35 @@ class TemplateEngine:
         video_cfg = cfg.get("video", {})
         vw = int(canvas_w * (video_cfg.get("width_pct", 100) / 100.0))
         aspect = vid_h and (vid_w / vid_h) or (16 / 9)
-        vh = max(2, int(vw / aspect))
+        vh = max(2, int(round(vw / aspect)))
+        if vh % 2:
+            vh += 1
         vx = int((canvas_w - vw) // 2)
         pos = video_cfg.get("position", {})
-        if "y" in pos:
-            center_y = int(pos["y"])
-            vy = int(center_y - vh // 2)
-        else:
-            vy = int((canvas_h - vh) // 2)
+        video_style = video_cfg.get("style", {})
+        rounded_radius = int(video_cfg.get("rounded_radius", video_style.get("rounded_radius", 0)))
+        stroke_width = int(video_cfg.get("stroke_width", video_style.get("stroke_width", 0)))
+        stroke_color = video_cfg.get("stroke_color", video_style.get("stroke_color", "#ffffff"))
+        stroke_color = video_style.get("stroke_color", stroke_color)
+        mask_path = self._prepare_video_mask_asset(vw, vh, rounded_radius)
 
-        logger.debug(f"Video box: vx={vx}, vy={vy}, vw={vw}, vh={vh}")
-
-        # Text blocks
+        # Pre-compute text layouts
+        top_layout = None
+        bottom_layout = None
         top_text_cfg = cfg.get("top_text", {})
         if top_text_cfg.get("enabled", False):
             text_content = self.request.top_text if self.request.top_text else self.request.text
-            self._render_text_block(
-                draw, image, root, top_text_cfg, canvas_w, canvas_h,
-                vx, vy, vw, vh, "top", text_content
-            )
-
+            top_layout = self._compute_text_layout(draw, root, top_text_cfg, canvas_w, text_content)
         bottom_text_cfg = cfg.get("bottom_text", {})
         if bottom_text_cfg.get("enabled", False):
             text_content = self.request.bottom_text if self.request.bottom_text else self.request.text
-            try:
-                self._render_text_block(
-                    draw, image, root, bottom_text_cfg, canvas_w, canvas_h,
-                    vx, vy, vw, vh, "bottom", text_content
-                )
-            except Exception as exc:
-                logger.error(f"bottom_text render failed: {exc}", exc_info=True)
-                raise
+            bottom_layout = self._compute_text_layout(draw, root, bottom_text_cfg, canvas_w, text_content)
 
         # Legacy single text fallback
-        if not top_text_cfg.get("enabled", False) and not bottom_text_cfg.get("enabled", False):
+        if not top_layout and not bottom_layout:
             legacy_text_cfg = cfg.get("text", {})
             if legacy_text_cfg:
-                legacy_as_top = {
+                top_text_cfg = {
                     "enabled": True,
                     "font": legacy_text_cfg.get("font", ""),
                     "font_size": legacy_text_cfg.get("font_size", 120),
@@ -670,13 +721,66 @@ class TemplateEngine:
                     "highlight": legacy_text_cfg.get("highlight", {})
                 }
                 text_content = self.request.top_text if self.request.top_text else self.request.text
-                self._render_text_block(
-                    draw, image, root, legacy_as_top, canvas_w, canvas_h,
-                    vx, vy, vw, vh, "top", text_content
-                )
+                top_layout = self._compute_text_layout(draw, root, top_text_cfg, canvas_w, text_content)
+
+        # Determine stacked layout positions and center the group
+        stack_height = vh
+        if top_layout:
+            stack_height += top_layout["text_height"] + top_layout["gap_px"]
+        if bottom_layout:
+            stack_height += bottom_layout["gap_px"] + bottom_layout["text_height"]
+
+        target_center = int(pos.get("y", canvas_h // 2))
+        stack_top = int(target_center - stack_height / 2)
+
+        top_text_top = None
+        bottom_text_top = None
+        current_y = stack_top
+
+        if top_layout:
+            top_text_top = current_y
+            current_y += top_layout["text_height"]
+            current_y += top_layout["gap_px"]
+
+        vy = current_y
+        current_y += vh
+
+        if stroke_width > 0:
+            inset = stroke_width / 2.0
+            bbox = [
+                vx - inset,
+                vy - inset,
+                vx + vw - 1 + inset,
+                vy + vh - 1 + inset,
+            ]
+            stroke_radius = max(0, rounded_radius + int(inset))
+            draw.rounded_rectangle(
+                bbox,
+                radius=stroke_radius,
+                outline=stroke_color,
+                width=max(1, stroke_width),
+            )
+
+        if bottom_layout:
+            current_y += bottom_layout["gap_px"]
+            bottom_text_top = current_y
+            current_y += bottom_layout["text_height"]
+
+        logger.debug(f"Video box: vx={vx}, vy={vy}, vw={vw}, vh={vh}")
+
+        # Render text blocks using computed positions
+        if top_layout and top_text_top is not None:
+            self._render_text_block(draw, image, top_text_cfg, top_layout, top_text_top, "top")
+
+        if bottom_layout and bottom_text_top is not None:
+            try:
+                self._render_text_block(draw, image, bottom_text_cfg, bottom_layout, bottom_text_top, "bottom")
+            except Exception as exc:
+                logger.error(f"bottom_text render failed: {exc}", exc_info=True)
+                raise
 
         # Optional header above top_text
-        if top_text_cfg.get("enabled", False):
+        if top_text_cfg.get("enabled", False) and top_layout:
             header_cfg = cfg.get("header", {})
             if header_cfg.get("enabled", False):
                 self._render_header(image, root, header_cfg, canvas_w, top_text_cfg, vx, vy)
@@ -744,9 +848,30 @@ class TemplateEngine:
 
         # Build FFmpeg filter graph
         base_opts = "-hide_banner -loglevel warning -loop 1"
+        filter_steps = ["[0:v]loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB[bg]"]
 
-        filter_steps = [f"[1:v]scale={vw}:-2[vid]"]
-        filter_steps.append(f"[0:v][vid]overlay={vx}:{vy}:format=yuv420:shortest=1[base]")
+        label_counter = 0
+        def new_label(prefix="tmp"):
+            nonlocal label_counter
+            label = f"{prefix}{label_counter}"
+            label_counter += 1
+            return label
+
+        current_base = "bg"
+        video_label = new_label("vid")
+        filter_steps.append(f"[1:v]scale={vw}:-2,format=rgba[{video_label}]")
+
+        if mask_path:
+            mask_label = new_label("mask")
+            filter_steps.append(f"movie={_ffmpeg_quote(mask_path)},format=rgba[{mask_label}]")
+            masked_label = new_label("vid")
+            filter_steps.append(f"[{video_label}][{mask_label}]alphamerge[{masked_label}]")
+            video_label = masked_label
+
+        stroke_label = None
+        next_base = new_label("base")
+        filter_steps.append(f"[{current_base}][{video_label}]overlay={vx}:{vy}:format=yuv420:shortest=1[{next_base}]")
+        current_base = next_base
 
         if logo_enabled:
             lg_in = "[2:v]"
@@ -781,9 +906,11 @@ class TemplateEngine:
                 lg_chain.append(f"{lg_label}copy[lg]")
 
             filter_steps.extend(lg_chain)
-            filter_steps.append(f"[base][lg]overlay={lx}:{ly}:format=auto[outv]")
-        else:
-            filter_steps.append(f"[base]copy[outv]")
+            next_base = new_label("base")
+            filter_steps.append(f"[{current_base}][lg]overlay={lx}:{ly}:format=auto[{next_base}]")
+            current_base = next_base
+
+        filter_steps.append(f"[{current_base}]copy[outv]")
 
         filter_complex = ";".join(filter_steps)
 
@@ -827,12 +954,10 @@ class TemplateEngine:
         logger.info("Render completed successfully (single-pass, final video saved).")
         return True
 
-    def _render_text_block(self, draw, image, root, txt_cfg, canvas_w, canvas_h, vx, vy, vw, vh, position_type, text_content):
-        """Render a text block (top or bottom) relative to video."""
+    def _compute_text_layout(self, draw, root, txt_cfg, canvas_w, text_content):
+        """Pre-compute font, wrapping, and geometry for a text block."""
         font_rel = txt_cfg.get("font", "")
         font_path = root / font_rel if font_rel else None
-
-        logger.debug(f"_render_text_block: position={position_type}, text='{text_content[:50]}'")
 
         requested_size = int(txt_cfg.get("font_size", 120))
         min_size = int(txt_cfg.get("min_font_size", 40))
@@ -862,22 +987,10 @@ class TemplateEngine:
         )
 
         gap_px = int(txt_cfg.get("gap_px", 20))
-
-        if position_type == "top":
-            text_bottom = vy - gap_px
-            text_top = int(text_bottom - text_h)
-        else:
-            text_top = vy + vh + gap_px
-
         align = txt_cfg.get("align", "center")
         align_lower = align.lower() if isinstance(align, str) else "center"
         margin = int(canvas_w * 0.05)
-        if align_lower == "center":
-            x_origin = (canvas_w - max_width) // 2
-        elif align_lower == "right":
-            x_origin = canvas_w - margin - max_width
-        else:
-            x_origin = margin
+        fallback_origin = (canvas_w - max_width) // 2 if align_lower == "center" else (canvas_w - margin - max_width if align_lower == "right" else margin)
 
         line_origins: List[int] = []
         for ln in lines:
@@ -890,6 +1003,34 @@ class TemplateEngine:
             else:
                 origin = margin
             line_origins.append(origin)
+
+        return {
+            "render_text": render_text,
+            "font": font,
+            "lines": lines,
+            "text_height": text_h,
+            "line_height": line_height,
+            "line_step": line_step,
+            "gap_px": gap_px,
+            "line_origins": line_origins,
+            "fallback_origin": fallback_origin,
+        }
+
+    def _render_text_block(self, draw, image, txt_cfg, layout, text_top, position_type):
+        """Render a text block (top or bottom) using a pre-computed layout."""
+        lines: List[str] = layout["lines"]
+        if not lines:
+            return
+
+        render_text = layout["render_text"]
+        font = layout["font"]
+        text_h = layout["text_height"]
+        line_height = layout["line_height"]
+        line_step = layout["line_step"]
+        line_origins = layout["line_origins"]
+        x_origin = layout["fallback_origin"]
+
+        logger.debug(f"_render_text_block: position={position_type}, text='{render_text[:50]}'")
 
         line_positions: List[int] = []
         current_line_top = text_top
@@ -904,18 +1045,20 @@ class TemplateEngine:
         if hl_cfg.get("enabled", False):
             highlight_type = hl_cfg.get("type", "background")
             
-            # NEW: Handle fragmented highlighting
             if highlight_type == "fragmented":
-                logger.info("Using fragmented text highlighting")
-                fragatext_result = call_fragatext(render_text, api_key)
-                
-                if fragatext_result and fragatext_result.get("fragments"):
-                    fragments = fragatext_result["fragments"]
-                    highlighted_words = map_fragments_to_words(render_text, fragments, lines)
-                    
+                target_pct = float(hl_cfg.get("target_pct", 0.45))
+                highlighted_words = select_fragmented_highlights(lines, target_pct)
+
+                if not highlighted_words:
+                    logger.info("Heuristic fragmented highlighting yielded no result, trying fragatext fallback")
+                    fragatext_result = call_fragatext(render_text, api_key)
+                    if fragatext_result and fragatext_result.get("fragments"):
+                        fragments = fragatext_result["fragments"]
+                        highlighted_words = map_fragments_to_words(render_text, fragments, lines)
+
+                if highlighted_words:
                     text_color = txt_cfg.get("color", "#ffffff")
                     highlight_color = hl_cfg.get("color", "#ffde59")
-                    
                     draw_fragmented_text(
                         draw,
                         lines,
@@ -931,8 +1074,7 @@ class TemplateEngine:
                         line_step=line_step,
                     )
                 else:
-                    # Fallback to standard rendering if fragatext fails
-                    logger.warning("Fragatext failed, falling back to standard rendering")
+                    logger.warning("Fragmented highlighting produced no words; falling back to standard rendering")
                     text_color = txt_cfg.get("color", "#ffffff")
                     for idx, (ln, line_top) in enumerate(zip(lines, line_positions)):
                         line_x = line_origins[idx] if idx < len(line_origins) else x_origin
@@ -994,6 +1136,19 @@ class TemplateEngine:
         if position_type == "top":
             txt_cfg["_computed_top"] = text_top
             txt_cfg["_computed_height"] = text_h
+
+    def _prepare_video_mask_asset(self, vw: int, vh: int, radius: int):
+        if radius <= 0:
+            return None
+        asset_root = Path(self.request.output_video_path).resolve().parent / "__video_assets"
+        asset_root.mkdir(parents=True, exist_ok=True)
+        mask_path = asset_root / f"mask_{vw}x{vh}_r{radius}.png"
+        if not mask_path.exists():
+            mask = Image.new("L", (vw, vh), 0)
+            draw = ImageDraw.Draw(mask)
+            draw.rounded_rectangle([(0, 0), (vw - 1, vh - 1)], radius=radius, fill=255)
+            mask.save(mask_path)
+        return mask_path
 
     def _render_header(self, image, root, header_cfg, canvas_w, top_text_cfg, vx, vy):
         """Render header image above top_text."""

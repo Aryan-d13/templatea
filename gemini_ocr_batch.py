@@ -23,7 +23,8 @@ import unicodedata
 from dotenv import load_dotenv
 import os
 
-load_dotenv() 
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env", override=True)
 from ai_hook_orchestrator_perplexity import (
     generate_ai_one_liners_browsing,
     generate_caption_with_hashtags,
@@ -126,7 +127,7 @@ def load_env_file(path: Path = Path(".env")) -> None:
         value = value.strip()
         if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
-        os.environ.setdefault(key, value)
+        os.environ[key] = value
 
 
 def extract_json_from_string(text: str) -> dict | list | None:
@@ -433,7 +434,10 @@ def main() -> None:
 
     args = parser.parse_args()
     load_env_file()
-
+    global api_key, perplexity_api_key, groq_api_key
+    api_key = os.getenv("GEMINI_API_KEY")
+    perplexity_api_key = (os.getenv("PERPLEXITY_API_KEY") or "").strip()
+    groq_api_key = os.getenv("GROQ_API_KEY")
     
     if not api_key:
         raise SystemExit("Set GEMINI_API_KEY (environment or .env) or use --api-key to provide a Gemini API key")

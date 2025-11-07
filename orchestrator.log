@@ -200,3 +200,121 @@
 2025-11-06 01:01:30,827 api.tasks INFO Cleared render cache for workspace DQZnWcYEXMi
 2025-11-06 01:01:32,679 orchestrator INFO render call workspace=DQZnWcYEXMi template=marketing_spots top="Anything. Does it even matter anymore. It doesn't i guess" bottom=None
 2025-11-06 02:32:26,938 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DK7XufYNift/?igsh=cDQ0ZnJla2RzdHZh --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpti15mmko.json
+2025-11-06 02:33:11,464 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 02:50:27,019 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 02:50:27,020 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 03:05:45,713 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DK7XufYNift/?igsh=cDQ0ZnJla2RzdHZh --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpj7f57cr5.json
+2025-11-06 03:05:47,054 __main__ WARNING No cached OCR text found; running full OCR.
+2025-11-06 03:06:04,096 api.tasks INFO Cleared render cache for workspace DK7XufYNift
+2025-11-06 03:06:05,659 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 03:06:05,659 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 05:18:56,721 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 05:18:56,721 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 18:31:21,902 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 18:31:21,902 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 19:15:46,214 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 19:15:46,215 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 20:17:28,255 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 20:17:28,255 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-06 20:59:27,099 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-06 20:59:27,099 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-07 02:22:52,525 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-07 02:22:52,525 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-07 15:39:29,790 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-07 15:39:29,791 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-07 15:43:57,718 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DK7XufYNift/?igsh=cDQ0ZnJla2RzdHZh --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpw0qub6bg.json
+2025-11-07 15:43:59,055 __main__ WARNING No cached OCR text found; running full OCR.
+2025-11-07 15:44:22,604 api.tasks INFO Cleared render cache for workspace DK7XufYNift
+2025-11-07 15:44:27,405 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-07 15:44:27,405 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-07 23:13:00,241 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmph73ef1gk.json
+2025-11-07 23:13:51,665 orchestrator INFO render call workspace=DLNBbMAShu0 template=startupsbyindian top='Experience is the prize for every mistake you make.' bottom=None
+2025-11-07 23:13:51,666 templates.StartupsbyIndian INFO SBI render call top='Experience is the prize for every mistake you make.' bottom=None
+2025-11-07 23:22:48,658 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-07 23:22:48,658 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-07 23:40:03,479 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DKhIZJRTr3A/?igsh=MW91ejUya2gxMXBqaA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpztutyy8p.json
+2025-11-07 23:50:26,783 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMzClqbo1eR/?igsh=MTJrcXYxbGRnYnl2cA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp30awt_03.json
+2025-11-07 23:51:24,600 orchestrator INFO render call workspace=DMzClqbo1eR template=startupsbyindian top="Anupam Mittal's words are the new currency" bottom=None
+2025-11-07 23:51:24,600 templates.StartupsbyIndian INFO SBI render call top="Anupam Mittal's words are the new currency" bottom=None
+2025-11-08 00:00:17,034 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:00:17,034 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:10:28,212 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMA-Uvfy4pM/?igsh=MW9iMTR2ZHR6dTIxMA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp97v3tz85.json
+2025-11-08 00:11:18,769 orchestrator INFO render call workspace=DMA-Uvfy4pM template=startupsbyindian top='The ultimate guide to making lakhs with startup schemes.' bottom=None
+2025-11-08 00:11:18,769 templates.StartupsbyIndian INFO SBI render call top='The ultimate guide to making lakhs with startup schemes.' bottom=None
+2025-11-08 00:15:38,602 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMA-Uvfy4pM/?igsh=MW9iMTR2ZHR6dTIxMA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp5r91pzjg.json
+2025-11-08 00:17:09,349 api.tasks INFO Cleared render cache for workspace DMA-Uvfy4pM
+2025-11-08 00:17:22,453 orchestrator INFO render call workspace=DMA-Uvfy4pM template=startupsbyindian top="Don't just dream big, make lakhs with these government schemes." bottom=None
+2025-11-08 00:17:22,453 templates.StartupsbyIndian INFO SBI render call top="Don't just dream big, make lakhs with these government schemes." bottom=None
+2025-11-08 00:18:41,390 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMzClqbo1eR/?igsh=MTJrcXYxbGRnYnl2cA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp796xxlki.json
+2025-11-08 00:18:57,766 api.tasks INFO Cleared render cache for workspace DMzClqbo1eR
+2025-11-08 00:19:12,695 orchestrator INFO render call workspace=DMzClqbo1eR template=startupsbyindian top='When Anupam Mittal gave him advice, not a fat check' bottom=None
+2025-11-08 00:19:12,695 templates.StartupsbyIndian INFO SBI render call top='When Anupam Mittal gave him advice, not a fat check' bottom=None
+2025-11-08 00:26:31,106 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:26:31,106 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:29:15,777 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:29:15,777 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:30:15,492 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:30:15,493 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:31:04,168 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:31:04,168 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:31:23,235 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:31:23,235 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:36:24,776 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:36:24,776 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 00:40:13,754 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQHOcABE2FM/?igsh=MTVqMnJ3MDRmM2d2Ng== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmphx4s0bcb.json
+2025-11-08 00:41:51,654 orchestrator INFO render call workspace=DQHOcABE2FM template=startupsbyindian top='Meetings: where ideas go to die... or get born.' bottom=None
+2025-11-08 00:41:51,655 templates.StartupsbyIndian INFO SBI render call top='Meetings: where ideas go to die... or get born.' bottom=None
+2025-11-08 00:46:05,973 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMA-Uvfy4pM/?igsh=MW9iMTR2ZHR6dTIxMA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpo7tx54x4.json
+2025-11-08 00:46:29,031 api.tasks INFO Cleared render cache for workspace DMA-Uvfy4pM
+2025-11-08 00:46:47,125 orchestrator INFO render call workspace=DMA-Uvfy4pM template=startupsbyindian top='The absurdly simple way to make lakhs with startups.' bottom=None
+2025-11-08 00:46:47,125 templates.StartupsbyIndian INFO SBI render call top='The absurdly simple way to make lakhs with startups.' bottom=None
+2025-11-08 01:26:12,749 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:26:12,749 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:48:52,728 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMA-Uvfy4pM/?igsh=MW9iMTR2ZHR6dTIxMA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp0p_kh72h.json
+2025-11-08 01:49:07,266 api.tasks INFO Cleared render cache for workspace DMA-Uvfy4pM
+2025-11-08 01:49:21,914 orchestrator INFO render call workspace=DMA-Uvfy4pM template=startupsbyindian top='The secret to success? Knowing the right startup schemes.' bottom=None
+2025-11-08 01:49:21,914 templates.StartupsbyIndian INFO SBI render call top='The secret to success? Knowing the right startup schemes.' bottom=None
+2025-11-08 01:55:53,217 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:55:53,217 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:56:28,347 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:56:28,348 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:56:45,312 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:56:45,314 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:57:45,605 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:57:45,605 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:58:59,526 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 01:58:59,526 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 02:00:53,926 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 02:00:53,926 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 02:00:54,057 orchestrator ERROR Renderer raised exception: cannot access local variable 'vy' where it is not associated with a value
+Traceback (most recent call last):
+  File "E:\Code\Templatea\orchestrator.py", line 1038, in ensure_render
+    ok = renderer(
+         ^^^^^^^^^
+  File "E:\Code\Templatea\templates\StartupsbyIndian\__init__.py", line 21, in render
+    return engine.render()
+           ^^^^^^^^^^^^^^^
+  File "E:\Code\Templatea\template_engine.py", line 705, in render
+    vy - inset,
+    ^^
+UnboundLocalError: cannot access local variable 'vy' where it is not associated with a value
+2025-11-08 02:01:28,638 orchestrator INFO render call workspace=DK7XufYNift template=startupsbyindian top='Please type or paste your custom copy text' bottom=None
+2025-11-08 02:01:28,638 templates.StartupsbyIndian INFO SBI render call top='Please type or paste your custom copy text' bottom=None
+2025-11-08 02:05:47,736 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMA-Uvfy4pM/?igsh=MW9iMTR2ZHR6dTIxMA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpywe9kyry.json
+2025-11-08 02:06:27,665 api.tasks INFO Cleared render cache for workspace DMA-Uvfy4pM
+2025-11-08 02:06:39,653 orchestrator INFO render call workspace=DMA-Uvfy4pM template=startupsbyindian top='Win the startup game with these secret funding schemes.' bottom=None
+2025-11-08 02:06:39,653 templates.StartupsbyIndian INFO SBI render call top='Win the startup game with these secret funding schemes.' bottom=None
+2025-11-08 02:08:56,805 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQHOcABE2FM/?igsh=MTVqMnJ3MDRmM2d2Ng== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpjpdsi9sr.json
+2025-11-08 02:09:31,397 api.tasks INFO Cleared render cache for workspace DQHOcABE2FM
+2025-11-08 02:10:40,587 orchestrator INFO render call workspace=DQHOcABE2FM template=startupsbyindian top="Your startup's fate is decided in the first 20 meetings." bottom=None
+2025-11-08 02:10:40,587 templates.StartupsbyIndian INFO SBI render call top="Your startup's fate is decided in the first 20 meetings." bottom=None
+2025-11-08 02:13:11,377 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DQHOcABE2FM/?igsh=MTVqMnJ3MDRmM2d2Ng== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpk_gwf9ek.json
+2025-11-08 02:13:36,178 api.tasks INFO Cleared render cache for workspace DQHOcABE2FM
+2025-11-08 02:13:55,250 orchestrator INFO render call workspace=DQHOcABE2FM template=startupsbyindian top='Unlock the secret to making your startup a winning champion.' bottom=None
+2025-11-08 02:13:55,250 templates.StartupsbyIndian INFO SBI render call top='Unlock the secret to making your startup a winning champion.' bottom=None
+2025-11-08 02:15:36,319 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp9_geaen8.json
+2025-11-08 02:16:18,497 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 02:16:34,905 orchestrator INFO render call workspace=DLNBbMAShu0 template=startupsbyindian top="The worst possible outcome is not failure, it's regret." bottom=None
+2025-11-08 02:16:34,906 templates.StartupsbyIndian INFO SBI render call top="The worst possible outcome is not failure, it's regret." bottom=None
+2025-11-08 02:19:07,987 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DKhIZJRTr3A/?igsh=MW91ejUya2gxMXBqaA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp_nl49l1g.json
+2025-11-08 02:23:20,686 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMzClqbo1eR/?igsh=MTJrcXYxbGRnYnl2cA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpd8ii_vgm.json

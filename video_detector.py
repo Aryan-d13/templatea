@@ -195,6 +195,50 @@ def apply_corner_inset(bbox, inset_px=8):
     }
 
 
+def clamp_bbox(bbox, frame_w, frame_h, min_size=10):
+    """Clamp bbox to valid frame coordinates and ensure non-zero size."""
+    x = max(0, min(int(bbox['x']), frame_w - 1))
+    y = max(0, min(int(bbox['y']), frame_h - 1))
+    max_w = frame_w - x
+    max_h = frame_h - y
+    w = max(min_size, min(max_w, int(bbox['w'])))
+    h = max(min_size, min(max_h, int(bbox['h'])))
+    return {'x': x, 'y': y, 'w': w, 'h': h}
+
+
+def apply_adaptive_corner_inset(bbox, inset_px, frame_w, frame_h):
+    """
+    Try increasingly less aggressive insets until bbox remains valid.
+    Returns (bbox, applied_inset).
+    """
+    if inset_px <= 0:
+        return clamp_bbox(bbox, frame_w, frame_h), 0
+
+    attempts = [
+        inset_px,
+        int(round(inset_px * 0.75)),
+        int(round(inset_px * 0.5)),
+        int(round(inset_px * 0.25)),
+        0,
+    ]
+    seen = set()
+    for attempt in attempts:
+        if attempt in seen:
+            continue
+        seen.add(attempt)
+        cand = dict(bbox)
+        if attempt > 0:
+            cand = apply_corner_inset(cand, inset_px=attempt)
+        cand = clamp_bbox(cand, frame_w, frame_h)
+        if cand['w'] > 1 and cand['h'] > 1:
+            if attempt != inset_px:
+                print(f"[adaptive inset] initial {inset_px}px failed, using {attempt}px")
+            return cand, attempt
+
+    print("[adaptive inset] all inset attempts failed, falling back to clamped bbox")
+    return clamp_bbox(bbox, frame_w, frame_h), 0
+
+
 def detect_uniform_borders(frame, threshold=5):
     """
     Detect and return crop bounds to remove uniform (static) borders of any color.
@@ -637,12 +681,12 @@ def detect_and_crop_video(input_path, output_path, confidence_threshold=0.0,
         print(f"After aggressive trim: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
     
     if handle_rounded_corners:
-        # Use detected inset if available, otherwise use parameter
         inset_to_apply = recommended_inset if has_corner_artifacts else corner_inset_px
-        print(f"Applying corner inset ({inset_to_apply}px)...")
-        refined_bbox = apply_corner_inset(refined_bbox, inset_px=inset_to_apply)
+        refined_bbox, applied_inset = apply_adaptive_corner_inset(refined_bbox, inset_to_apply, width, height)
+        print(f"Applying corner inset ({applied_inset}px)...")
         print(f"After corner inset: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
     
+    refined_bbox = clamp_bbox(refined_bbox, width, height)
     print(f"Final bbox: x={refined_bbox['x']}, y={refined_bbox['y']}, w={refined_bbox['w']}, h={refined_bbox['h']}")
     
     # ========================

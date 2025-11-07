@@ -14,13 +14,16 @@
     "position": {
       "x": 540,
       "y": 960
-    }
+    },
+    "rounded_radius": 50,
+    "stroke_width": 10,
+    "stroke_color": "#03d97f"
   },
   "top_text": {
     "enabled": true,
     "font": "assets/Poppins-Bold.ttf",
-    "font_size": 110,
-    "min_font_size": 50,
+    "font_size": 52,
+    "min_font_size": 25,
     "max_lines": 3,
     "line_width_pct": 88,
     "line_spacing_factor": 1.25,
@@ -40,7 +43,7 @@
     "enabled": false
   },
   "renderer": {
-    "module": "template_engine",
-    "entrypoint": "render_with_template"
+    "module": "templates.StartupsbyIndian",
+    "entrypoint": "render"
   }
 }
