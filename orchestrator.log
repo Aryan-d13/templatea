@@ -318,3 +318,42 @@ UnboundLocalError: cannot access local variable 'vy' where it is not associated 
 2025-11-08 02:16:34,906 templates.StartupsbyIndian INFO SBI render call top="The worst possible outcome is not failure, it's regret." bottom=None
 2025-11-08 02:19:07,987 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DKhIZJRTr3A/?igsh=MW91ejUya2gxMXBqaA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp_nl49l1g.json
 2025-11-08 02:23:20,686 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMzClqbo1eR/?igsh=MTJrcXYxbGRnYnl2cA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmpd8ii_vgm.json
+2025-11-08 02:23:50,706 api.tasks INFO Cleared render cache for workspace DMzClqbo1eR
+2025-11-08 02:24:06,701 orchestrator INFO render call workspace=DMzClqbo1eR template=startupsbyindian top="Anupam Mittal's advice changed Ashneer's life, not his wallet." bottom=None
+2025-11-08 02:24:06,702 templates.StartupsbyIndian INFO SBI render call top="Anupam Mittal's advice changed Ashneer's life, not his wallet." bottom=None
+2025-11-08 02:34:12,478 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DKhIZJRTr3A/?igsh=MW91ejUya2gxMXBqaA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmp85itxxb2.json
+2025-11-08 02:34:49,108 orchestrator INFO render call workspace=DKhIZJRTr3A template=startupsbyindian top="The sooner you act, the farther you'll go." bottom=None
+2025-11-08 02:34:49,108 templates.StartupsbyIndian INFO SBI render call top="The sooner you act, the farther you'll go." bottom=None
+2025-11-08 02:35:41,883 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DMzClqbo1eR/?igsh=MTJrcXYxbGRnYnl2cA== --template-id startupsbyindian --emit-json-workspace D:\Temp\tmprk9y_ott.json
+2025-11-08 02:35:57,259 api.tasks INFO Cleared render cache for workspace DMzClqbo1eR
+2025-11-08 02:36:10,872 orchestrator INFO render call workspace=DMzClqbo1eR template=startupsbyindian top='When investors say no, try a different code.' bottom=None
+2025-11-08 02:36:10,872 templates.StartupsbyIndian INFO SBI render call top='When investors say no, try a different code.' bottom=None
+2025-11-08 03:03:24,999 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DNJeIOVz4CI/?igsh=eGJpcHZ4b2g4bmxz --template-id fullframe_smart --emit-json-workspace D:\Temp\tmp4j422g5o.json
+2025-11-08 03:04:30,896 orchestrator INFO render call workspace=DNJeIOVz4CI template=fullframe_smart top='They want it all, and they want it now.' bottom=None
+2025-11-08 03:51:01,211 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id IC --emit-json-workspace D:\Temp\tmpw7wx8zc7.json
+2025-11-08 03:51:21,970 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 03:51:38,947 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='Experience only comes by making mistakes, not by winning.'
+2025-11-08 03:51:38,947 templates.IC INFO IIA render call top=None bottom='Experience only comes by making mistakes, not by winning.'
+2025-11-08 03:54:57,193 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id IC --emit-json-workspace D:\Temp\tmp3v2b5zfr.json
+2025-11-08 03:55:08,917 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 03:55:20,634 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='The fastest way to success is through trial and error.'
+2025-11-08 03:55:20,635 templates.IC INFO IIA render call top=None bottom='The fastest way to success is through trial and error.'
+2025-11-08 16:48:14,203 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id IC --emit-json-workspace D:\Temp\tmpxr_vb22o.json
+2025-11-08 16:48:33,032 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 16:48:46,553 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='The worst possible outcome is still better than giving up.'
+2025-11-08 16:48:46,553 templates.IC INFO IIA render call top=None bottom='The worst possible outcome is still better than giving up.'
+2025-11-08 16:50:29,299 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='The worst possible outcome is still better than giving up.'
+2025-11-08 16:50:29,300 templates.IC INFO IIA render call top=None bottom='The worst possible outcome is still better than giving up.'
+2025-11-08 17:10:05,049 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id IC --emit-json-workspace D:\Temp\tmpg0ss7y77.json
+2025-11-08 17:11:03,337 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 17:11:15,538 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='Mistakes are the secret ingredient in your success recipe.'
+2025-11-08 17:11:15,538 templates.IC INFO IIA render call top=None bottom='Mistakes are the secret ingredient in your success recipe.'
+2025-11-08 17:31:39,207 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DLNBbMAShu0/?igsh=MWZpMHhkYnNkamFldg== --template-id IC --emit-json-workspace D:\Temp\tmpwgt68w6g.json
+2025-11-08 17:31:58,839 api.tasks INFO Cleared render cache for workspace DLNBbMAShu0
+2025-11-08 17:32:10,100 orchestrator INFO render call workspace=DLNBbMAShu0 template=IC top=None bottom='Life begins at the end of your comfort zone.'
+2025-11-08 17:32:10,101 templates.IC INFO IIA render call top=None bottom='Life begins at the end of your comfort zone.'
+2025-11-08 17:38:12,613 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DNJeIOVz4CI/?igsh=eGJpcHZ4b2g4bmxz --template-id IC --emit-json-workspace D:\Temp\tmp6pmad2oo.json
+2025-11-08 17:38:30,299 api.tasks INFO Cleared render cache for workspace DNJeIOVz4CI
+2025-11-08 17:38:44,329 orchestrator INFO render call workspace=DNJeIOVz4CI template=IC top=None bottom='Comet cracks the code: premium quality, affordable price.'
+2025-11-08 17:38:44,329 templates.IC INFO IIA render call top=None bottom='Comet cracks the code: premium quality, affordable price.'
+2025-11-08 17:42:08,517 api.tasks INFO Running command: python E:\Code\Templatea\orchestrator.py --url https://www.instagram.com/reel/DNJeIOVz4CI/?igsh=eGJpcHZ4b2g4bmxz --template-id IC --emit-json-workspace D:\Temp\tmp7rwk_g6p.json

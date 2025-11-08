@@ -676,11 +676,28 @@ class TemplateEngine:
         logger.info(f"Input video dimensions: {vid_w}x{vid_h}")
 
         video_cfg = cfg.get("video", {})
-        vw = int(canvas_w * (video_cfg.get("width_pct", 100) / 100.0))
-        aspect = vid_h and (vid_w / vid_h) or (16 / 9)
-        vh = max(2, int(round(vw / aspect)))
-        if vh % 2:
-            vh += 1
+        fit_mode = video_cfg.get("fit_mode", "width_pct").lower()
+        width_pct = float(video_cfg.get("width_pct", 100))
+        if fit_mode == "cover":
+            scale = max(canvas_w / vid_w, canvas_h / vid_h)
+            raw_vw = vid_w * scale
+            raw_vh = vid_h * scale
+        elif fit_mode == "contain":
+            scale = min(canvas_w / vid_w, canvas_h / vid_h)
+            raw_vw = vid_w * scale
+            raw_vh = vid_h * scale
+        else:
+            raw_vw = canvas_w * (width_pct / 100.0)
+            aspect = vid_h and (vid_w / vid_h) or (16 / 9)
+            raw_vh = raw_vw / aspect
+
+        def to_even(value: float) -> int:
+            value = max(2.0, value)
+            even = int(math.floor(value / 2.0) * 2)
+            return max(2, even if even >= 2 else 2)
+
+        vw = to_even(raw_vw)
+        vh = to_even(raw_vh)
         vx = int((canvas_w - vw) // 2)
         pos = video_cfg.get("position", {})
         video_style = video_cfg.get("style", {})
@@ -693,14 +710,18 @@ class TemplateEngine:
         # Pre-compute text layouts
         top_layout = None
         bottom_layout = None
+        top_placement = None
+        bottom_placement = None
         top_text_cfg = cfg.get("top_text", {})
         if top_text_cfg.get("enabled", False):
             text_content = self.request.top_text if self.request.top_text else self.request.text
             top_layout = self._compute_text_layout(draw, root, top_text_cfg, canvas_w, text_content)
+            top_placement = (top_text_cfg.get("placement_mode") or "stack").lower()
         bottom_text_cfg = cfg.get("bottom_text", {})
         if bottom_text_cfg.get("enabled", False):
             text_content = self.request.bottom_text if self.request.bottom_text else self.request.text
             bottom_layout = self._compute_text_layout(draw, root, bottom_text_cfg, canvas_w, text_content)
+            bottom_placement = (bottom_text_cfg.get("placement_mode") or "stack").lower()
 
         # Legacy single text fallback
         if not top_layout and not bottom_layout:
@@ -725,9 +746,9 @@ class TemplateEngine:
 
         # Determine stacked layout positions and center the group
         stack_height = vh
-        if top_layout:
+        if top_layout and top_placement == "stack":
             stack_height += top_layout["text_height"] + top_layout["gap_px"]
-        if bottom_layout:
+        if bottom_layout and bottom_placement == "stack":
             stack_height += bottom_layout["gap_px"] + bottom_layout["text_height"]
 
         target_center = int(pos.get("y", canvas_h // 2))
@@ -737,7 +758,7 @@ class TemplateEngine:
         bottom_text_top = None
         current_y = stack_top
 
-        if top_layout:
+        if top_layout and top_placement == "stack":
             top_text_top = current_y
             current_y += top_layout["text_height"]
             current_y += top_layout["gap_px"]
@@ -761,10 +782,15 @@ class TemplateEngine:
                 width=max(1, stroke_width),
             )
 
-        if bottom_layout:
+        if bottom_layout and bottom_placement == "stack":
             current_y += bottom_layout["gap_px"]
             bottom_text_top = current_y
             current_y += bottom_layout["text_height"]
+
+        if top_layout and top_placement == "absolute":
+            top_text_top = self._compute_absolute_text_top(top_layout, top_text_cfg, canvas_h)
+        if bottom_layout and bottom_placement == "absolute":
+            bottom_text_top = self._compute_absolute_text_top(bottom_layout, bottom_text_cfg, canvas_h)
 
         logger.debug(f"Video box: vx={vx}, vy={vy}, vw={vw}, vh={vh}")
 
@@ -859,7 +885,7 @@ class TemplateEngine:
 
         current_base = "bg"
         video_label = new_label("vid")
-        filter_steps.append(f"[1:v]scale={vw}:-2,format=rgba[{video_label}]")
+        filter_steps.append(f"[1:v]scale={vw}:{vh},format=rgba[{video_label}]")
 
         if mask_path:
             mask_label = new_label("mask")
@@ -1136,6 +1162,19 @@ class TemplateEngine:
         if position_type == "top":
             txt_cfg["_computed_top"] = text_top
             txt_cfg["_computed_height"] = text_h
+
+    def _compute_absolute_text_top(self, layout, txt_cfg, canvas_h):
+        anchor = (txt_cfg.get("anchor") or "top").lower()
+        offset = int(txt_cfg.get("offset", 0))
+        text_h = layout["text_height"]
+        if anchor == "bottom":
+            top = canvas_h - offset - text_h
+        elif anchor == "center":
+            top = int((canvas_h - text_h) / 2) + offset
+        else:
+            top = offset
+        max_top = canvas_h - text_h
+        return max(0, min(max_top, top))
 
     def _prepare_video_mask_asset(self, vw: int, vh: int, radius: int):
         if radius <= 0:
