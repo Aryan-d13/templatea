@@ -93,7 +93,7 @@ class ChoiceRequest(BaseModel):
     text: str
 
     def validate(self) -> None:
-        if self.type not in {"manual", "ai"}:
+        if self.type not in {"manual", "ai", "ocr"}:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid choice type")
         if not self.text or not self.text.strip():
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Text cannot be empty")

@@ -1,71 +1,49 @@
 {
-  "id": "marketing_spots",
-  "renderer": {
-      "module": "templates.marketing_spots",
-      "entrypoint": "render"
-  },
-  "description": "High-conversion marketing spot template with bold captions.",
-  "name": "Marketing Spots",
-  "canvas": { 
-      "width": 1080, 
-      "height": 1920 
-  },
-  "background": {
-      "type": "color",
-      "value": "#000000"
-  },
-  "video": {
-      "width_pct": 100,
-      "position": {
-          "y": 960
-      }
-  },
-  "top_text": {
-      "enabled": true,
-      "font": "assets/canva-sans-bold.otf",
-      "font_size": 52,
-      "min_font_size": 30,
-      "max_lines": 2,
-      "line_width_pct": 90,
-      "gap_px": 40,
-      "color": "#f5f5f5",
-      "align": "center",
-      "casing_mode": "sentence",
-      "line_spacing_factor": 0.75,
-      "highlight": {
-          "enabled": true,
-          "type": "background",
-          "mode": "ai",
-          "highlight_count": 1,
-          "color": "#ef0000"
-      }
-  },
-  "bottom_text": {
-      "enabled": false,
-      "font": "assets/canva-sans-bold.ttf",
-      "font_size": 28,
-      "min_font_size": 10,
-      "max_lines": 3,
-      "line_width_pct": 75,
-      "line_spacing_factor": 1.3,
-      "color": "#a6a6a6",
-      "casing_mode": "none",
-      "align": "center",
-      "gap_px": 33,
-      "highlight": {
-          "enabled": false}
-  },
-  "logo": {
-      "enabled": true,
-      "path": "assets/marketingspots_logo.png",
-      "size": { 
-          "width": 100
-      },
-      "position_mode": "canvas",
-    "position": {
-      "x": 918,
-      "y": 58.1
+    "id": "marketingspots",
+    "name": "Marketing Spots",
+    "canvas": {
+        "width": 1080,
+        "height": 1920
+    },
+    "background": {
+        "type": "image",
+        "value": "assets/spots.png"
+    },
+    "video": {
+        "width_pct": 80,
+        "position": {
+            "x": 540,
+            "y": 960
+        },
+        "rounded_radius": 50,
+        "stroke_width": 10,
+        "stroke_color": "#ef0404"
+    },
+    "top_text": {
+        "enabled": true,
+        "font": "assets/LeagueSpartan-Black.ttf",
+        "font_size": 55,
+        "min_font_size": 25,
+        "max_lines": 3,
+        "line_width_pct": 80,
+        "line_spacing_factor": 1.25,
+        "color": "#fcfafa",
+        "casing_mode": "upper",
+        "align": "center",
+        "gap_px": 50,
+        "highlight": {
+            "enabled": true,
+            "type": "fragmented",
+            "color": "#ef0404",
+            "hard_cap_pct": 20,
+            "target_pct": 15
+        }
+    },
+    "logo": {
+        "enabled": false
+    },
+    "renderer": {
+        "module": "templates.marketing_spots",
+        "entrypoint": "render"
     }
-
-  }
 }

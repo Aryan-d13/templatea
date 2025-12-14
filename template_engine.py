@@ -49,6 +49,12 @@ if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[template_engine] %(levelname)s %(message)s"))
     logger.addHandler(handler)
+    
+    # Debug file handler (commented out for production)
+    # file_handler = logging.FileHandler("debug_template_engine.log", mode='w')
+    # file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    # logger.addHandler(file_handler)
+
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
 
@@ -662,11 +668,26 @@ class TemplateEngine:
         bg = cfg.get("background", {})
         if bg.get("type") == "image":
             bg_path = root / bg.get("value", "")
+            logger.info(f"Background image path: {bg_path} (Absolute: {bg_path.resolve()})")
             if bg_path.exists():
+                logger.info("Background image found, loading...")
                 bgi = Image.open(bg_path).convert("RGBA")
-                bgi = bgi.resize((canvas_w, canvas_h), Image.LANCZOS)
+                
+                # Cover logic
+                img_w, img_h = bgi.size
+                scale = max(canvas_w / img_w, canvas_h / img_h)
+                new_w = int(img_w * scale)
+                new_h = int(img_h * scale)
+                bgi = bgi.resize((new_w, new_h), Image.LANCZOS)
+                
+                # Center crop
+                left = (new_w - canvas_w) // 2
+                top = (new_h - canvas_h) // 2
+                bgi = bgi.crop((left, top, left + canvas_w, top + canvas_h))
+                
                 image.paste(bgi, (0, 0))
             else:
+                logger.error(f"Background image NOT found at {bg_path}")
                 draw.rectangle([0, 0, canvas_w, canvas_h], fill=bg.get("value", "#000000"))
         else:
             draw.rectangle([0, 0, canvas_w, canvas_h], fill=bg.get("value", "#000000"))
@@ -846,32 +867,6 @@ class TemplateEngine:
                     offset_x = int(video_relative.get("x", 0))
                     offset_y = int(video_relative.get("y", 0))
                     lx = vx + offset_x
-                    ly = vy + offset_y
-                else:
-                    pos = logo_cfg.get("position", "top-right")
-                    margin = int(logo_cfg.get("margin", 36))
-                    if isinstance(pos, dict):
-                        lx = int(pos.get("x", margin))
-                        ly = int(pos.get("y", margin))
-                    elif pos == "top-right":
-                        lw = target_w if target_w else 0
-                        lx = canvas_w - lw - margin
-                        ly = margin
-                    elif pos == "top-left":
-                        lx = margin
-                        ly = margin
-                    elif pos == "bottom-right":
-                        lw = target_w if target_w else 0
-                        lh = target_h if target_h else 0
-                        lx = canvas_w - lw - margin
-                        ly = canvas_h - lh - margin
-                    else:
-                        lh = target_h if target_h else 0
-                        lx = margin
-                        ly = canvas_h - lh - margin
-
-                logo_input_path = str(logo_path)
-
         # Build FFmpeg filter graph
         base_opts = "-hide_banner -loglevel warning -loop 1"
         filter_steps = ["[0:v]loop=-1:size=1:start=0,setpts=N/FRAME_RATE/TB[bg]"]
